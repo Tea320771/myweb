@@ -6,6 +6,12 @@
     <title>소송비용액 확정 신청 도우미 (로컴 AI)</title>
     <script src='https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js'></script>
     
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script>
+        // PDF.js 워커 설정
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    </script>
+    
     <link rel="stylesheet" href="style.css">
 </head>
 <body oncontextmenu="return false" ondragstart="return false" onselectstart="return false">
@@ -35,30 +41,27 @@
             <div class="intro-title">소송비용액 확정 신청<br>AI 스마트 작성</div>
             
             <div class="smart-upload-area" id="smartUploadZone">
-    <div onclick="document.getElementById('docInput').click()" style="cursor: pointer;">
-        <input type="file" id="docInput" multiple accept="image/*, .png, .jpg, .jpeg" style="display:none" onchange="queueFiles(this.files)">
-        
-        <div id="upload-content">
-            <span class="upload-icon">📂</span>
-            <div class="upload-title">문서 추가하기</div>
-            <div class="upload-desc">
-                판결문, 위임계약서, 이체확인증 등을<br>
-                <strong>하나씩 혹은 한꺼번에</strong> 끌어다 놓거나 클릭해서 추가하세요.
-            </div>
-        </div>
-    </div>
+                <div onclick="document.getElementById('docInput').click()" style="cursor: pointer;">
+                    <input type="file" id="docInput" multiple accept="image/*, .png, .jpg, .jpeg, .pdf" style="display:none" onchange="queueFiles(this.files)">
+                    
+                    <div id="upload-content">
+                        <span class="upload-icon">📂</span>
+                        <div class="upload-title">문서 추가하기</div>
+                        <div class="upload-desc">
+                            판결문, 위임계약서(PDF/이미지) 등을<br>
+                            <strong>하나씩 혹은 한꺼번에</strong> 끌어다 놓거나 클릭해서 추가하세요.
+                        </div>
+                    </div>
+                </div>
 
-    <div id="file-queue-list" class="file-queue-container hidden"></div>
+                <div id="file-queue-list" class="file-queue-container hidden"></div>
 
-    <div id="action-area" class="hidden" style="margin-top: 20px; border-top: 1px dashed #cbd5e1; padding-top: 20px;">
-        <div style="font-size: 0.9rem; color: #64748b; margin-bottom: 10px;">모든 문서를 추가하셨나요?</div>
-        <button class="btn-start" onclick="startAnalysis()" style="margin-top: 0; background-color: var(--color-scrivener);">
-            📄 문서 분석 시작 (OCR)
-        </button>
-    </div>
-    
-    <div id="processing-logs" class="processing-logs"></div>
-</div>
+                <div id="action-area" class="hidden" style="margin-top: 20px; border-top: 1px dashed #cbd5e1; padding-top: 20px;">
+                    <div style="font-size: 0.9rem; color: #64748b; margin-bottom: 10px;">모든 문서를 추가하셨나요?</div>
+                    <button class="btn-start" onclick="startAnalysis()" style="margin-top: 0; background-color: var(--color-scrivener);">
+                        📄 문서 분석 시작 (OCR)
+                    </button>
+                </div>
                 
                 <div id="processing-logs" class="processing-logs"></div>
             </div>
@@ -446,7 +449,12 @@
     </div>
 </div>
 
-<script src="script.js"></script>
+<script src="1_intro_analysis.js"></script>
+<script src="2_case_info.js"></script>
+<script src="3_calculator.js"></script>
+<script src="4_evidence.js"></script>
+<script src="5_preview.js"></script>
+
 <div id="applicant-selection-modal" class="modal hidden">
     <div class="modal-content">
         <div class="modal-header">
