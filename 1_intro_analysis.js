@@ -1,11 +1,11 @@
 /* ==========================================
    1_intro_analysis.js
    - 기본 설정, 네비게이션, 파일 업로드
-   - [UPDATE] Tesseract.js 제거 -> OCR.space API 연동 (인식률 향상)
+   - [UPDATE] OCR.space API 연동 및 정규식 강화 (표/줄바꿈 완벽 대응)
    ========================================== */
 
-// ⚠️ 중요: OCR.space에서 발급받은 API 키를 아래에 입력하세요.
-const OCR_API_KEY = 'K82202390688957'
+// ✅ 사용자가 제공한 OCR.space API 키 적용
+const OCR_API_KEY = 'K81181494888957'; 
 
 // --- 1. 기본 보안 및 초기화 설정 ---
 document.addEventListener('contextmenu', function (e) { e.preventDefault(); alert("보안 정책상 우클릭을 사용할 수 없습니다."); });
@@ -132,7 +132,6 @@ function removeFile(index) {
 }
 
 // --- [핵심] 4. OCR.space API 호출 로직 ---
-
 async function startAnalysis() {
     if (queuedFiles.length === 0) { alert("분석할 파일이 없습니다."); return; }
     const actionArea = document.getElementById('action-area');
@@ -156,8 +155,9 @@ async function startAnalysis() {
             formData.append("file", file);
             formData.append("language", "kor"); // 한글 설정
             formData.append("isOverlayRequired", "false");
-            formData.append("OCREngine", "2"); // Engine 2가 한글/숫자 인식률이 더 좋음
+            formData.append("OCREngine", "2"); // Engine 2가 한글/숫자 인식률이 훨씬 좋음
             formData.append("scale", "true");
+            formData.append("detectOrientation", "true");
 
             // API 호출
             const response = await fetch("https://api.ocr.space/parse/image", {
@@ -175,7 +175,7 @@ async function startAnalysis() {
                 throw new Error(result.ErrorMessage?.[0] || "OCR 처리 중 오류 발생");
             }
 
-            // 결과 텍스트 추출
+            // 결과 텍스트 추출 (페이지별 통합)
             let extractedText = "";
             if (result.ParsedResults && result.ParsedResults.length > 0) {
                 result.ParsedResults.forEach(page => {
@@ -183,8 +183,9 @@ async function startAnalysis() {
                 });
             }
 
-            // 줄바꿈 및 다중 공백 처리
+            // 줄바꿈 및 다중 공백 처리 (정규식을 위해 한 줄로 만듦)
             const normalizedText = extractedText.replace(/\r\n|\n|\r/g, ' ').replace(/\s+/g, ' ');
+            console.log(`[${file.name}] 추출 텍스트:`, normalizedText); // 디버깅용 콘솔 출력
 
             // 파일명 또는 내용 기반 심급 추정
             let targetInstance = 'common';
@@ -214,12 +215,12 @@ async function startAnalysis() {
     } catch (error) {
         console.error(error);
         logsContainer.innerHTML += `<div class="log-item log-error">❌ 오류: ${error.message}</div>`;
-        alert("분석 중 오류가 발생했습니다.\n(무료 API 키 제한이거나 파일 문제일 수 있습니다.)\nAPI 키를 확인하거나 잠시 후 다시 시도하세요.");
+        alert("분석 중 오류가 발생했습니다.\nAPI 키를 확인하거나 잠시 후 다시 시도하세요.");
         actionArea.classList.remove('hidden');
     }
 }
 
-// --- [핵심] 5. 데이터 추출 알고리즘 (정규식 강화 - 기존과 동일) ---
+// --- [핵심] 5. 데이터 추출 알고리즘 (정규식 강화) ---
 function analyzeLegalDocuments(categorizedText) {
     const result = {
         courtName1: null, caseNo1: null,
@@ -236,7 +237,7 @@ function analyzeLegalDocuments(categorizedText) {
 
     const allText = categorizedText.common + categorizedText[1] + categorizedText[2] + categorizedText[3];
 
-    // 당사자(원고/피고) 추출
+    // 1. 당사자(원고/피고) 추출
     const clientPatterns = [
         /위\s*임\s*인\s*\(?갑\)?\s*[:;]?\s*([가-힣]{2,5})(?!\s*변호사)/,
         /당\s*사\s*자\s*[:;]?\s*([가-힣]{2,5})/, 
@@ -250,13 +251,16 @@ function analyzeLegalDocuments(categorizedText) {
     ];
     result.contractOpponentName = findBestMatch(allText, opponentPatterns);
 
+    // 2. 주소 추출
     const addrRegex = /주\s*소\s*[:;]?\s*([가-힣0-9\s,\-\(\)로길층호]+(?:시|도|구|군|동|면|읍)\s*[가-힣0-9\s,\-\(\)로길층호]*)(?=\s주\s*민|\s전\s*화)/;
     const addrMatch = allText.match(addrRegex);
     if (addrMatch) result.clientAddress = addrMatch[1].trim();
 
+    // 3. 심급별 상세 정보 추출 함수
     function extractFromText(text, level) {
         if (!text) return;
 
+        // (1) 법원명
         const courtRegex = /([가-힣]{2,}(?:지방|고등|가정|행정|회생)법원(?:[가-힣]*지원)?|대법원)/g;
         let cMatch;
         while ((cMatch = courtRegex.exec(text)) !== null) {
@@ -266,30 +270,45 @@ function analyzeLegalDocuments(categorizedText) {
             if (level === 1 && !name.includes("고등") && !name.includes("대법원")) { result.courtName1 = name; break; }
         }
 
-        const caseNoRegex = /(20\d{2})\s*([가-힣]{1,3})\s*(\d+)/;
+        // (2) 사건번호 [핵심 수정 사항]
+        // 패턴 설명: 
+        // 1. (20\d{2}) : 연도 2023 등
+        // 2. \s*([가-힣]{1,5}) : 가합, 가단 등 (띄어쓰기 허용)
+        // 3. [^0-9]*? : 숫자 이외의 문자가 끼어있어도 됨 (예: "사건명 손해배상(기)") -> 여기가 핵심!
+        // 4. (\d{3,}) : 3자리 이상의 숫자 (사건번호 일련번호)
+        const caseNoRegex = /(20\d{2})\s*([가-힣]{1,5})[^0-9]*?(\d{3,})/;
         const caseMatch = text.match(caseNoRegex);
         if (caseMatch) {
+            // 추출된 연도 + 구분문자 + 번호를 합침
             result['caseNo' + level] = caseMatch[1] + caseMatch[2] + caseMatch[3];
         }
 
+        // (3) 착수금 (기존 유지)
         const feeRegexStart = /(?:착\s*수\s*금|착\s*수\s*보\s*수)[^0-9]*?금\s*([0-9,]+)\s*원/;
         const startMatch = text.match(feeRegexStart);
         if (startMatch) result['startFee' + level] = startMatch[1];
 
-        const feeRegexSuccess = /(?:성\s*공\s*보\s*수|성\s*과\s*보\s*수)[^0-9]*?금\s*([0-9,]+)\s*원/;
+        // (4) 성공보수 [핵심 수정 사항]
+        // "승소한 경우 : 금 7,400,000원" 패턴을 잡기 위해
+        // "성공보수" 키워드 외에 "승소한 경우" 등 조건부 문구 뒤에 나오는 "금 OOO원"을 찾음
+        const feeRegexSuccess = /(?:성\s*공\s*보\s*수|성\s*과\s*보\s*수|승\s*소\s*한\s*경\s*우)[^0-9]*?금\s*([0-9,]+)\s*원/;
         const successMatch = text.match(feeRegexSuccess);
         if (successMatch) result['successFee' + level] = successMatch[1];
 
+        // (5) 소가
         const sogaMatch = text.match(/(?:소\s*가|소송목적의\s*값)[^0-9]*([0-9,]+)/);
         if (sogaMatch) result['soga' + level] = sogaMatch[1];
     }
 
+    // 각 심급 텍스트 분석 실행
     if (categorizedText[1]) extractFromText(categorizedText[1], 1);
     if (categorizedText[2]) extractFromText(categorizedText[2], 2);
     if (categorizedText[3]) extractFromText(categorizedText[3], 3);
     
+    // Fallback: 분류되지 않은 common 텍스트에서도 누락된 정보 검색
     if (!result.courtName1 && !result.courtName2 && !result.courtName3) {
         extractFromText(categorizedText.common, 1);
+        // 결과 재배치
         if(result.courtName1 && result.courtName1.includes("대법원")) { 
             result.courtName3 = result.courtName1; result.courtName1 = null; 
             if(result.caseNo1) { result.caseNo3 = result.caseNo1; result.caseNo1 = null; }
@@ -339,10 +358,15 @@ function selectApplicant(selectionSide) {
         finalAppName = rightName; finalRespName = leftName;
     }
 
+    // 이름 입력
     if(finalAppName && !finalAppName.includes("미확인")) setAndTrigger('applicantName', finalAppName);
+    
+    // 주소 입력
     if(data.clientAddress && finalAppName === data.contractClientName) {
         setAndTrigger('applicantAddr', data.clientAddress);
     }
+    
+    // 피신청인 입력
     if(finalRespName && !finalRespName.includes("미확인")) {
         document.getElementById('step3-area').classList.remove('hidden');
         document.getElementById('btnToCaseInfo').classList.remove('hidden');
@@ -351,7 +375,7 @@ function selectApplicant(selectionSide) {
 
     fillRemainingData(data);
     showManualInput();
-    alert(`분석 완료!\n신청인: ${finalAppName}\n피신청인: ${finalRespName}\n1심, 2심, 3심 문서 분석이 반영되었습니다.`);
+    alert(`분석 완료!\n신청인: ${finalAppName}\n피신청인: ${finalRespName}\n1심, 2심, 3심 내용이 반영되었습니다.`);
 }
 
 function fillRemainingData(data) {
@@ -404,6 +428,7 @@ function showManualInput() {
     section.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
+// 이벤트 리스너들
 const appName = document.getElementById('applicantName');
 const appAddr = document.getElementById('applicantAddr');
 const step2Area = document.getElementById('step2-area');
