@@ -1,10 +1,10 @@
 /* ==========================================
    api/analyze.js
-   - [FINAL FIX] 무료 계정에서 확실히 지원하는 'gemini-1.5-flash' 적용
-   - 2.0/2.5 버전은 무료 계정(Free Tier)에서 limit: 0 으로 막혀있음 확인됨
+   - [FINAL FIX] 사용자 키 목록에 존재하는 'models/gemini-flash-latest' 적용
    ========================================== */
 
 export default async function handler(req, res) {
+    // 1. CORS 설정
     res.setHeader('Access-Control-Allow-Credentials', true);
     res.setHeader('Access-Control-Allow-Origin', '*'); 
     res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
@@ -19,9 +19,9 @@ export default async function handler(req, res) {
     try {
         const { parts } = req.body;
 
-        // [핵심] 무료 계정(Free Tier)의 유일한 희망: 1.5 Flash
-        // 2.0, 2.5, exp 등은 무료 계정에서 limit: 0 (사용 불가) 상태임이 확인되었습니다.
-        const targetModel = 'models/gemini-1.5-flash';
+        // [핵심 수정] 사용자님 목록(screenshot)에 있는 정확한 모델명 사용
+        // 'gemini-1.5-flash' (X) -> 'gemini-flash-latest' (O)
+        const targetModel = 'models/gemini-flash-latest';
         
         const url = `https://generativelanguage.googleapis.com/v1beta/${targetModel}:generateContent?key=${GEMINI_API_KEY}`;
         
@@ -37,10 +37,10 @@ export default async function handler(req, res) {
             
             const specificMessage = errorData.error?.message || JSON.stringify(errorData);
             
-            // 429 에러 처리 (이제 limit:0 은 안 뜰 겁니다)
+            // 429 할당량 초과 에러 처리
             if (response.status === 429) {
                  return res.status(429).json({ 
-                    error: `[할당량 초과] 1분 뒤에 다시 시도해주세요. (${specificMessage})` 
+                    error: `[할당량 초과] 사용량이 많아 잠시 제한되었습니다. 1분 뒤에 다시 시도해주세요. (${specificMessage})` 
                 });
             }
 
