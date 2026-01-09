@@ -1,13 +1,11 @@
 /* ==========================================
    1_intro_analysis.js
    - 기본 설정, 네비게이션, 파일 업로드
-   - [UPDATE] 판결문/계약서 구분 및 사건번호 우선순위 적용
-   - [UPDATE] 이체내역(송금) 금액 추출 및 사용자 확인 로직
-   - [UPDATE] 판결문 당사자(이름/주소) 및 판결선고일 정밀 추출 로직 강화 (공백/줄바꿈 대응)
+   - [UPDATE] OCR.space 제거 -> Google Gemini Vision API 직접 연동
    ========================================== */
 
-// ✅ 사용자가 제공한 OCR.space API 키 적용
-const OCR_API_KEY = 'K81181494888957'; 
+// ✅ 사용자가 제공한 Google Gemini API Key 적용
+const GEMINI_API_KEY = 'AIzaSyADC1J9RIykkSDbEa4iccPA28-AF04NX7w'; 
 
 // --- 1. 기본 보안 및 초기화 설정 ---
 document.addEventListener('contextmenu', function (e) { e.preventDefault(); alert("보안 정책상 우클릭을 사용할 수 없습니다."); });
@@ -132,319 +130,151 @@ function removeFile(index) {
     document.getElementById('docInput').value = ""; 
 }
 
-// --- [핵심] 4. OCR.space API 호출 로직 ---
+// --- [핵심] 4. 파일 변환 및 Gemini API 호출 로직 ---
 async function startAnalysis() {
     if (queuedFiles.length === 0) { alert("분석할 파일이 없습니다."); return; }
+    
     const actionArea = document.getElementById('action-area');
     const logsContainer = document.getElementById('processing-logs');
     
     actionArea.classList.add('hidden'); 
     logsContainer.style.display = 'block';
-    logsContainer.innerHTML = `<div class="log-item log-info">분석 엔진(OCR.space) 연결 중...</div>`;
-    
-    let categorizedText = { 
-        1: { jud: "", etc: "" }, 
-        2: { jud: "", etc: "" }, 
-        3: { jud: "", etc: "" }, 
-        common: "" 
-    };
+    logsContainer.innerHTML = `<div class="log-item log-info">AI 분석 엔진(Gemini) 준비 중...</div>`;
 
     try {
+        // AI에게 보낼 데이터 배열 (프롬프트 + 이미지/PDF 데이터)
+        let parts = [];
+        
+        // 시스템 프롬프트 설정
+        const systemPrompt = `
+        너는 유능한 법률 사무원이야. 제공된 법률 문서 이미지(판결문, 사건위임계약서, 이체내역)들을 종합적으로 분석해서 소송비용확정신청에 필요한 정보를 JSON 포맷으로 추출해줘.
+        
+        [분석 원칙]
+        1. **우선순위:** 정보가 충돌하면 '판결문' > '사건위임계약서' > '이체내역' 순서로 신뢰해라.
+        2. **당사자 파악:** 판결문의 당사자 표시(원고, 피고)와 주소를 정확히 찾아라. 주소가 흩어져 있어도 문맥을 보고 합쳐라.
+        3. **비용 부담자(승패소):** 판결문 '주문'을 분석하여 소송비용 부담자를 파악하고, 비용을 받는 승소자(권리자)를 'winnerSide'('plaintiff' 또는 'defendant')에 명시해라.
+           - 예: "소송비용은 원고가 부담한다" -> 승소자는 피고(defendant)
+        4. **판결선고일:** 판결문의 '선고일' 또는 '판결선고' 날짜를 찾아라. (예: 2024. 10. 10.)
+        5. **금전 분석:** '법무법인' 등에 송금된 내역 중 착수금/성공보수로 추정되는 금액을 찾아라.
+           - 심급(1,2,3심)을 문서 내용으로 추정할 수 있으면 할당하고, 모르면 'ambiguousAmounts'에 넣어라.
+        
+        [추출할 JSON 필드]
+        {
+          "plaintiffName": "원고 이름",
+          "plaintiffAddr": "원고 주소 (도로명 주소 등)",
+          "defendantName": "피고 이름",
+          "defendantAddr": "피고 주소 (도로명 주소 등)",
+          "winnerSide": "plaintiff" 또는 "defendant",
+          
+          "courtName1": "1심 법원명", "caseNo1": "1심 사건번호", "rulingDate1": "1심 선고일(YYYY. MM. DD.)",
+          "courtName2": "2심 법원명", "caseNo2": "2심 사건번호", "rulingDate2": "2심 선고일",
+          "courtName3": "3심 법원명", "caseNo3": "3심 사건번호", "rulingDate3": "3심 선고일",
+          
+          "startFee1": "1심 착수금(숫자만)", "successFee1": "1심 성공보수(숫자만)",
+          "startFee2": "2심 착수금", "successFee2": "2심 성공보수",
+          "startFee3": "3심 착수금", "successFee3": "3심 성공보수",
+          "soga1": "소가(숫자만)",
+          
+          "ambiguousAmounts": [ {"amount": "금액", "level": "추정심급(없으면 common)"} ]
+        }
+        
+        반드시 JSON 형식의 텍스트만 응답해줘. 코드블록(\`\`\`) 없이 순수 JSON만 반환해.
+        `;
+
+        parts.push({ text: systemPrompt });
+
+        // 파일들을 Base64로 변환하여 parts에 추가
         for (let i = 0; i < queuedFiles.length; i++) {
             const file = queuedFiles[i];
-            logsContainer.innerHTML += `<div class="log-item log-info">📡 서버 전송 및 분석 중... (${file.name})</div>`;
-            logsContainer.scrollTop = logsContainer.scrollHeight;
-
-            let formData = new FormData();
-            formData.append("file", file);
-            formData.append("language", "kor");
-            formData.append("isOverlayRequired", "false");
-            formData.append("OCREngine", "2");
-            formData.append("scale", "true");
-            formData.append("detectOrientation", "true");
-
-            const response = await fetch("https://api.ocr.space/parse/image", {
-                method: "POST",
-                headers: { "apikey": OCR_API_KEY },
-                body: formData
-            });
-
-            const result = await response.json();
-
-            if (result.IsErroredOnProcessing) {
-                console.error(result);
-                throw new Error(result.ErrorMessage?.[0] || "OCR 처리 중 오류 발생");
-            }
-
-            let extractedText = "";
-            if (result.ParsedResults && result.ParsedResults.length > 0) {
-                result.ParsedResults.forEach(page => { extractedText += " " + page.ParsedText; });
-            }
-
-            // [수정] 줄바꿈을 공백 하나로 치환하되, 너무 많은 공백은 하나로 줄임
-            const normalizedText = extractedText.replace(/\r\n|\n|\r/g, ' ').replace(/\s+/g, ' ');
-            console.log(`[${file.name}] 추출 텍스트:`, normalizedText);
-
-            let targetInstance = 'common';
-            if (file.name.includes("1심") || file.name.includes("지방")) targetInstance = 1;
-            else if (file.name.includes("2심") || file.name.includes("항소") || file.name.includes("고등")) targetInstance = 2;
-            else if (file.name.includes("3심") || file.name.includes("상고") || file.name.includes("대법")) targetInstance = 3;
-            else {
-                if (normalizedText.includes("지방 법원") || normalizedText.includes("지방법원") || normalizedText.includes("지원")) targetInstance = 1;
-                else if (normalizedText.includes("고등 법원") || normalizedText.includes("고등법원")) targetInstance = 2;
-                else if (normalizedText.includes("대법원")) targetInstance = 3;
-            }
-
-            const isJudgment = normalizedText.includes("판결") && (normalizedText.includes("주문") || normalizedText.includes("이유") || normalizedText.includes("사건"));
-
-            if (targetInstance !== 'common') {
-                if (isJudgment) {
-                    categorizedText[targetInstance].jud += ` ${normalizedText}`;
-                } else {
-                    categorizedText[targetInstance].etc += ` ${normalizedText}`;
-                }
-            } else {
-                categorizedText['common'] += ` ${normalizedText}`;
-            }
+            logsContainer.innerHTML += `<div class="log-item log-info">📂 파일 읽는 중... (${file.name})</div>`;
             
-            logsContainer.innerHTML += `<div class="log-item log-success">✅ ${file.name} 분석 완료</div>`;
-            logsContainer.scrollTop = logsContainer.scrollHeight;
+            const base64Data = await fileToBase64(file);
+            const mimeType = file.type;
+            
+            // Gemini API 포맷에 맞춰 데이터 추가
+            parts.push({
+                inline_data: {
+                    mime_type: mimeType,
+                    data: base64Data
+                }
+            });
+        }
+        
+        logsContainer.innerHTML += `<div class="log-item log-info" style="font-weight:bold;">🤖 Google Gemini가 문서를 분석 중입니다...</div>`;
+        logsContainer.scrollTop = logsContainer.scrollHeight;
+
+        // Gemini API 호출
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+        
+        const response = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ contents: [{ parts: parts }] })
+        });
+
+        const result = await response.json();
+        
+        if (result.error) {
+            throw new Error(result.error.message || "Gemini API 오류 발생");
+        }
+        
+        if (!result.candidates || result.candidates.length === 0) {
+            throw new Error("AI 분석 결과가 없습니다.");
         }
 
-        logsContainer.innerHTML += `<div class="log-item log-info" style="font-weight:bold;">📊 데이터 정밀 추출 중...</div>`;
-
-        aiExtractedData = analyzeLegalDocuments(categorizedText);
+        // 결과 파싱
+        let rawText = result.candidates[0].content.parts[0].text;
+        // JSON 마크다운 제거
+        rawText = rawText.replace(/```json/g, "").replace(/```/g, "").trim();
         
-        logsContainer.innerHTML += `<div class="log-item log-success" style="font-weight:bold;">✨ 분석 완료! 결과 확인</div>`;
+        console.log("Gemini Raw Response:", rawText); // 디버깅용
+
+        try {
+            aiExtractedData = JSON.parse(rawText);
+        } catch (e) {
+            console.error("JSON Parsing Error:", e);
+            throw new Error("AI 응답을 처리하는 데 실패했습니다.");
+        }
+
+        logsContainer.innerHTML += `<div class="log-item log-success" style="font-weight:bold;">✨ AI 분석 완료! 결과 확인</div>`;
         setTimeout(() => { confirmApplicantProcess(aiExtractedData); }, 800);
 
     } catch (error) {
         console.error(error);
         logsContainer.innerHTML += `<div class="log-item log-error">❌ 오류: ${error.message}</div>`;
-        alert("분석 중 오류가 발생했습니다.\nAPI 키를 확인하거나 잠시 후 다시 시도하세요.");
+        alert("분석 중 오류가 발생했습니다.\n" + error.message);
         actionArea.classList.remove('hidden');
     }
 }
 
-// --- [핵심] 5. 데이터 추출 알고리즘 (판결문 주소/당사자/선고일 정밀 파악 수정) ---
-function analyzeLegalDocuments(categorizedText) {
-    const result = {
-        courtName1: null, caseNo1: null, rulingDate1: null,
-        courtName2: null, caseNo2: null, rulingDate2: null,
-        courtName3: null, caseNo3: null, rulingDate3: null,
-        plaintiffName: null, defendantName: null, 
-        plaintiffAddr: null, defendantAddr: null,
-        contractClientName: null, contractOpponentName: null,
-        clientAddress: null,
-        winnerSide: null,
-        soga1: null, soga2: null, soga3: null,
-        startFee1: null, successFee1: null,
-        startFee2: null, successFee2: null,
-        startFee3: null, successFee3: null,
-        ambiguousAmounts: [] 
-    };
-
-    const allText = categorizedText.common 
-        + categorizedText[1].jud + categorizedText[1].etc 
-        + categorizedText[2].jud + categorizedText[2].etc 
-        + categorizedText[3].jud + categorizedText[3].etc;
-
-    // 1. 심급별 상세 정보 추출
-    function extractFromText(text, level, isJudgmentSource) {
-        if (!text) return;
-
-        // (1) 법원명
-        if (!result['courtName' + level] || isJudgmentSource) {
-            const courtRegex = /([가-힣]{2,}(?:지방|고등|가정|행정|회생)법원(?:[가-힣]*지원)?|대법원)/g;
-            let cMatch;
-            while ((cMatch = courtRegex.exec(text)) !== null) {
-                const name = cMatch[1];
-                if (level === 3 && name === "대법원") { result.courtName3 = name; break; }
-                if (level === 2 && (name.includes("고등") || name.includes("지방"))) { result.courtName2 = name; if(name.includes("고등")) break; }
-                if (level === 1 && !name.includes("고등") && !name.includes("대법원")) { result.courtName1 = name; break; }
-            }
-        }
-
-        // (2) 사건번호 [판결문 우선 적용]
-        if (!result['caseNo' + level] || isJudgmentSource) {
-            const caseNoRegex = /(20\d{2})\s*([가-힣]{1,5})[^0-9]*?(\d{3,})/;
-            const caseMatch = text.match(caseNoRegex);
-            if (caseMatch) {
-                const fullCaseNo = caseMatch[1] + caseMatch[2] + caseMatch[3];
-                if (isJudgmentSource) {
-                    result['caseNo' + level] = fullCaseNo;
-                } else if (!result['caseNo' + level]) {
-                    result['caseNo' + level] = fullCaseNo;
-                }
-            }
-        }
-
-        // (3) [수정] 판결선고일 추출 (OCR 공백/오류 대응 강화)
-        // "판결 선 고", "선 고", "2025. 7. 25. 선고" 등 다양한 패턴 허용
-        if (isJudgmentSource) {
-             // 패턴1: "판결선고 2024.10.10" 또는 "선고 2024.10.10" (날짜 사이 공백 유연하게)
-             const dateRegex1 = /(?:판결)?선\s*고\s*((?:20\d{2})\.\s*\d{1,2}\.\s*\d{1,2}\.?)/;
-             // 패턴2: "2025. 7. 25. 선고" (대법원 또는 일부 판결문 스타일)
-             const dateRegex2 = /((?:20\d{2})\.\s*\d{1,2}\.\s*\d{1,2}\.?)\s*선\s*고/;
-             
-             let dateMatch = text.match(dateRegex1) || text.match(dateRegex2);
-             if (dateMatch) {
-                 result['rulingDate' + level] = dateMatch[1];
-             }
-        }
-        
-        // (4) [수정] 당사자(이름, 주소) 정밀 추출
-        // OCR 결과가 섞일 수 있으므로 "원고" 키워드 주변과 "피고" 키워드 주변을 넓게 탐색
-        if (isJudgmentSource) {
-            // 이름 패턴: 2~5글자 한글, 변호사/법무법인 제외
-            const nameRegex = /([가-힣]{2,5})(?!\s*변호사|\s*법무법인|\s*소송대리인)/;
-            // 주소 패턴: 시/도/군/구 + 로/길/동/리 + 번지수 (광범위 매칭)
-            const addrRegex = /((?:서울|부산|대구|인천|광주|대전|울산|세종|경기|강원|충북|충남|전북|전남|경북|경남|제주)[가-힣]*\s*(?:[가-힣]{1,10}(?:시|군|구))?\s*[가-힣0-9\s·]+(?:로|길|동|읍|면|리)\s*[\d]+(?:-[\d]+)?)/;
-
-            // 1. 원고(신청인/항소인) 정보 찾기
-            const plaintiffKeywordRegex = /(?:원\s*고|항\s*소\s*인|상\s*고\s*인|신\s*청\s*인)[^가-힣]*([가-힣]{2,5})/;
-            const pMatch = text.match(plaintiffKeywordRegex);
-            if (pMatch && !result.plaintiffName) {
-                // 키워드 바로 뒤에 이름이 온 경우
-                const potentialName = pMatch[1];
-                if (!potentialName.includes("변호사") && !potentialName.includes("법무")) {
-                    result.plaintiffName = potentialName;
-                }
-            }
-
-            // 2. 피고(상대방/피항소인) 정보 찾기
-            const defendantKeywordRegex = /(?:피\s*고|피\s*항\s*소\s*인|피\s*상\s*고\s*인|피\s*신\s*청\s*인)[^가-힣]*([가-힣]{2,5})/;
-            const dMatch = text.match(defendantKeywordRegex);
-            if (dMatch && !result.defendantName) {
-                const potentialName = dMatch[1];
-                if (!potentialName.includes("변호사") && !potentialName.includes("법무")) {
-                    result.defendantName = potentialName;
-                }
-            }
-            
-            // 3. 주소 찾기 (이름 근처 혹은 문서 상단의 주소 패턴 스캔)
-            // 전체 텍스트에서 주소 패턴들을 모두 찾아서, 원고/피고 이름 근처에 있는 것을 매핑하는 것이 이상적이나
-            // OCR 순서가 뒤섞인 경우 첫 번째 발견 주소 -> 원고, 두 번째 -> 피고로 추정 (일반적 순서)
-            if (!result.plaintiffAddr || !result.defendantAddr) {
-                let allAddresses = [];
-                let m;
-                // global flag regex for address
-                const globalAddrRegex = new RegExp(addrRegex, 'g');
-                while ((m = globalAddrRegex.exec(text)) !== null) {
-                    // 주소가 너무 짧거나(5자 미만) 법원 주소(남양주지원 등)인 경우 제외 로직 필요하면 추가
-                    if (m[1].length > 8) allAddresses.push(m[1]);
-                }
-                
-                // 보통 판결문 상단에 원고 주소 먼저, 그 다음 피고 주소가 나옴
-                if (allAddresses.length > 0 && !result.plaintiffAddr) result.plaintiffAddr = allAddresses[0];
-                if (allAddresses.length > 1 && !result.defendantAddr) result.defendantAddr = allAddresses[1];
-            }
-        }
-
-        // (5) 비용 부담(주문) 분석 (기존 유지)
-        if (isJudgmentSource) {
-            let orderText = text;
-            const startIdx = text.indexOf("주 문");
-            const endIdx = text.indexOf("이 유");
-            if (startIdx !== -1 && endIdx !== -1) orderText = text.substring(startIdx, endIdx);
-            else if (startIdx !== -1) orderText = text.substring(startIdx);
-
-            if (orderText.includes("소송비용은 원고가 부담") || orderText.includes("항소비용은 원고가 부담") || orderText.includes("상고비용은 원고가 부담")) {
-                result.winnerSide = "defendant"; 
-            } else if (orderText.includes("소송비용은 피고가 부담") || orderText.includes("항소비용은 피고가 부담") || orderText.includes("상고비용은 피고가 부담")) {
-                result.winnerSide = "plaintiff"; 
-            }
-        }
-
-        // (6) 금전 정보 (기존 유지)
-        const feeRegexStart = /(?:착\s*수\s*금|착\s*수\s*보\s*수)[^0-9]*?금\s*([0-9,]+)\s*원/;
-        const startMatch = text.match(feeRegexStart);
-        if (startMatch && !result['startFee' + level]) result['startFee' + level] = startMatch[1];
-
-        const feeRegexSuccess = /(?:성\s*공\s*보\s*수|성\s*과\s*보\s*수|승\s*소\s*한\s*경\s*우)[^0-9]*?금\s*([0-9,]+)\s*원/;
-        const successMatch = text.match(feeRegexSuccess);
-        if (successMatch && !result['successFee' + level]) result['successFee' + level] = successMatch[1];
-
-        const sogaMatch = text.match(/(?:소\s*가|소송목적의\s*값)[^0-9]*([0-9,]+)/);
-        if (sogaMatch && !result['soga' + level]) result['soga' + level] = sogaMatch[1];
-    }
-
-    [1, 2, 3].forEach(level => {
-        extractFromText(categorizedText[level].jud, level, true);
-        extractFromText(categorizedText[level].etc, level, false);
+// Helper: 파일을 Base64 문자열로 변환 (헤더 제거)
+function fileToBase64(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
+        reader.onload = () => {
+            // "data:image/png;base64,..." 형식을 "..." 부분만 추출
+            const base64String = reader.result.split(',')[1];
+            resolve(base64String);
+        };
+        reader.onerror = (error) => reject(error);
     });
-    
-    // Fallback: 계약서 기반 주소/이름 (판결문에서 못 찾았을 경우)
-    if (!result.clientAddress && !result.plaintiffAddr && !result.defendantAddr) {
-        const addrRegex = /주\s*소\s*[:;]?\s*([가-힣0-9\s,\-\(\)로길층호]+(?:시|도|구|군|동|면|읍)\s*[가-힣0-9\s,\-\(\)로길층호]*)(?=\s주\s*민|\s전\s*화)/;
-        const addrMatch = allText.match(addrRegex);
-        if (addrMatch) result.clientAddress = addrMatch[1].trim();
-    }
-    const clientPatterns = [/위\s*임\s*인\s*\(?갑\)?\s*[:;]?\s*([가-힣]{2,5})(?!\s*변호사)/, /당\s*사\s*자\s*[:;]?\s*([가-힣]{2,5})/];
-    result.contractClientName = findBestMatch(allText, clientPatterns);
-    
-    // Fallback: 법원 정보
-    if (!result.courtName1 && !result.courtName2 && !result.courtName3) {
-        extractFromText(categorizedText.common, 1, false);
-        if(result.courtName1 && result.courtName1.includes("대법원")) { 
-            result.courtName3 = result.courtName1; result.courtName1 = null; 
-            if(result.caseNo1) { result.caseNo3 = result.caseNo1; result.caseNo1 = null; }
-        }
-        else if(result.courtName1 && result.courtName1.includes("고등")) {
-             result.courtName2 = result.courtName1; result.courtName1 = null;
-             if(result.caseNo1) { result.caseNo2 = result.caseNo1; result.caseNo1 = null; }
-        }
-    }
-
-    // 이체내역(송금) 정밀 분석 (기존 유지)
-    function scanForTransfers(text, level) {
-        const transferRegex = /(?:출금|이체|송금|법무법인)[^0-9\-\n]*?[\-\s]([0-9,]{3,})(?:원|\s|$)/g;
-        const simpleMinusRegex = /[\-]\s*([0-9,]{3,})\s*원/g;
-        let matches = []; let match;
-        while ((match = transferRegex.exec(text)) !== null) matches.push(match[1]);
-        while ((match = simpleMinusRegex.exec(text)) !== null) matches.push(match[1]);
-
-        matches.forEach(amt => {
-            let cleanAmt = amt.replace(/,/g, '');
-            if (parseInt(cleanAmt) > 100000) { 
-                const alreadyFound = [
-                    result.startFee1, result.successFee1, 
-                    result.startFee2, result.successFee2, 
-                    result.startFee3, result.successFee3
-                ].some(fee => fee && fee.replace(/,/g, '') === cleanAmt);
-                if (!alreadyFound && !result.ambiguousAmounts.some(item => item.amount === amt)) {
-                     result.ambiguousAmounts.push({ amount: amt, level: level });
-                }
-            }
-        });
-    }
-    scanForTransfers(categorizedText[1].etc, 1);
-    scanForTransfers(categorizedText[2].etc, 2);
-    scanForTransfers(categorizedText[3].etc, 3);
-    scanForTransfers(categorizedText.common, 'common');
-
-    return result;
 }
 
-function findBestMatch(text, patternArray) {
-    for (let regex of patternArray) {
-        const match = text.match(regex);
-        if (match && match[1]) {
-            return match[1].trim();
-        }
-    }
-    return null;
-}
-
-// --- 6. 신청인 확인 및 데이터 주입 ---
+// --- 6. 신청인 확인 및 데이터 주입 (AI 데이터 반영) ---
 function confirmApplicantProcess(data) {
-    processAmbiguousFees(data); 
+    processAmbiguousFees(data);
 
-    let extractedPlaintiff = data.plaintiffName || data.contractClientName || "원고(미확인)";
-    let extractedDefendant = data.defendantName || data.contractOpponentName || "피고(미확인)";
+    let extractedPlaintiff = data.plaintiffName || "원고(미확인)";
+    let extractedDefendant = data.defendantName || "피고(미확인)";
     
     document.getElementById('modal-plaintiff-name').innerText = extractedPlaintiff; 
     document.getElementById('modal-defendant-name').innerText = extractedDefendant;
+    
+    if (data.winnerSide) {
+        console.log(`AI 분석 결과: 승소자는 ${data.winnerSide} 입니다.`);
+    }
+
     document.getElementById('applicant-selection-modal').classList.remove('hidden');
 }
 
@@ -457,24 +287,17 @@ function processAmbiguousFees(data) {
         const amt = item.amount;
         const levelText = (item.level !== 'common') ? `${item.level}심` : "심급 미상";
 
+        if (item.level !== 'common' && data['startFee' + item.level]) return;
+
         if (item.level !== 'common') {
-            if (!data['startFee' + item.level]) {
-                if (confirm(`[이체내역 분석]\n'${amt}원'이 발견되었습니다 (${levelText} 추정).\n이 금액을 '${item.level}심 착수금'으로 입력하시겠습니까?`)) {
-                    data['startFee' + item.level] = amt;
-                    assigned = true;
-                }
+            if (confirm(`[AI 분석]\n금액 '${amt}원'이 발견되었습니다 (${levelText} 추정).\n이 금액을 '${item.level}심 착수금'으로 입력하시겠습니까?`)) {
+                data['startFee' + item.level] = amt;
+                assigned = true;
             }
-            if (!assigned && !data['successFee' + item.level]) {
-                if (confirm(`그럼 '${amt}원'을 '${item.level}심 성공보수'로 입력하시겠습니까?`)) {
-                    data['successFee' + item.level] = amt;
-                    assigned = true;
-                }
-            }
-        }
-        if (!assigned) {
-            if (!data.startFee1 && confirm(`'${amt}원'을 '1심 착수금'으로 설정할까요?`)) { data.startFee1 = amt; assigned = true; }
-            else if (!data.startFee2 && confirm(`'${amt}원'을 '2심 착수금'으로 설정할까요?`)) { data.startFee2 = amt; assigned = true; }
-            else if (!data.startFee3 && confirm(`'${amt}원'을 '3심 착수금'으로 설정할까요?`)) { data.startFee3 = amt; assigned = true; }
+        } else {
+            if (!data.startFee1 && confirm(`금액 '${amt}원'을 '1심 착수금'으로 설정할까요?`)) { data.startFee1 = amt; }
+            else if (!data.startFee2 && confirm(`금액 '${amt}원'을 '2심 착수금'으로 설정할까요?`)) { data.startFee2 = amt; }
+            else if (!data.startFee3 && confirm(`금액 '${amt}원'을 '3심 착수금'으로 설정할까요?`)) { data.startFee3 = amt; }
         }
         handledAmounts.push(amt);
     });
@@ -496,13 +319,11 @@ function selectApplicant(selectionSide) {
 
     if(finalAppName && !finalAppName.includes("미확인")) setAndTrigger('applicantName', finalAppName);
     
-    // 주소 입력 우선순위 (판결문 주소 -> 계약서 주소)
+    // AI가 추출한 정확한 주소 사용
     if (selectionSide === 'plaintiff') {
         if (data.plaintiffAddr) setAndTrigger('applicantAddr', data.plaintiffAddr);
-        else if (data.clientAddress) setAndTrigger('applicantAddr', data.clientAddress);
     } else {
         if (data.defendantAddr) setAndTrigger('applicantAddr', data.defendantAddr);
-        else if (data.clientAddress && finalAppName === data.contractClientName) setAndTrigger('applicantAddr', data.clientAddress);
     }
 
     if(finalRespName && !finalRespName.includes("미확인")) {
@@ -513,7 +334,7 @@ function selectApplicant(selectionSide) {
 
     fillRemainingData(data);
     showManualInput();
-    alert(`분석 완료!\n신청인: ${finalAppName}\n피신청인: ${finalRespName}\n1심, 2심, 3심 내용이 반영되었습니다.`);
+    alert(`AI 분석 완료!\n신청인: ${finalAppName}\n피신청인: ${finalRespName}\n내용이 반영되었습니다.`);
 }
 
 function fillRemainingData(data) {
@@ -526,14 +347,14 @@ function fillRemainingData(data) {
 
     if(data.courtName1) setAndTrigger('courtName1', data.courtName1);
     if(data.caseNo1) setAndTrigger('caseNo1', data.caseNo1);
-    if(data.rulingDate1) setAndTrigger('rulingDate1', data.rulingDate1); 
+    if(data.rulingDate1) setAndTrigger('rulingDate1', data.rulingDate1);
     if(data.soga1) setAndTrigger('soga1', data.soga1);
     if(data.startFee1) setAndTrigger('startFee1', data.startFee1);
     if(data.successFee1) setAndTrigger('successFee1', data.successFee1);
 
     if(data.courtName2) setAndTrigger('courtName2', data.courtName2);
     if(data.caseNo2) setAndTrigger('caseNo2', data.caseNo2);
-    if(data.rulingDate2) setAndTrigger('rulingDate2', data.rulingDate2); 
+    if(data.rulingDate2) setAndTrigger('rulingDate2', data.rulingDate2);
     if(data.soga2) setAndTrigger('soga2', data.soga2);
     if(data.startFee2) setAndTrigger('startFee2', data.startFee2);
     if(data.successFee2) setAndTrigger('successFee2', data.successFee2);
@@ -542,7 +363,7 @@ function fillRemainingData(data) {
     else if(data.caseNo3) setAndTrigger('courtName3', '대법원'); 
     
     if(data.caseNo3) setAndTrigger('caseNo3', data.caseNo3);
-    if(data.rulingDate3) setAndTrigger('rulingDate3', data.rulingDate3); 
+    if(data.rulingDate3) setAndTrigger('rulingDate3', data.rulingDate3);
     if(data.startFee3) setAndTrigger('startFee3', data.startFee3);
     if(data.successFee3) setAndTrigger('successFee3', data.successFee3);
 }
