@@ -1,31 +1,59 @@
 /* ==========================================
-   api/analyze.js (디버깅용 임시 코드)
-   - 내 키로 사용 가능한 모델 목록을 조회합니다.
+   api/analyze.js
+   - [FINAL] Vercel Serverless Function
+   - 실제 문서 분석 로직 복구 (모델명: gemini-1.5-flash)
    ========================================== */
 
 export default async function handler(req, res) {
+    // 1. CORS 헤더 설정 (모든 도메인 허용)
+    res.setHeader('Access-Control-Allow-Credentials', true);
+    res.setHeader('Access-Control-Allow-Origin', '*'); 
+    res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
+    res.setHeader(
+        'Access-Control-Allow-Headers',
+        'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
+    );
+
+    // 2. OPTIONS 요청 처리
+    if (req.method === 'OPTIONS') {
+        res.status(200).end();
+        return;
+    }
+
+    // 3. POST 요청만 허용
+    if (req.method !== 'POST') {
+        return res.status(405).json({ error: 'Method not allowed' });
+    }
+
+    // 4. API Key 확인
     const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+    if (!GEMINI_API_KEY) {
+        return res.status(500).json({ error: 'Server configuration error: API Key missing' });
+    }
 
     try {
-        // 모델 목록 조회 (ListModels)
-        const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${GEMINI_API_KEY}`;
-        const response = await fetch(url);
-        const data = await response.json();
+        const { parts } = req.body;
 
-        if (!response.ok) {
-            return res.status(response.status).json({
-                error: "API Key 문제 발생",
-                details: data
-            });
-        }
-
-        // 성공 시 사용 가능한 모델 이름들만 뽑아서 보여줌
-        return res.status(200).json({
-            message: "API 키는 정상입니다! 아래 모델 중 하나를 코드에 써야 합니다.",
-            available_models: data.models.map(m => m.name) // 예: "models/gemini-1.5-flash"
+        // [중요] 가장 안정적인 모델명 사용: 'gemini-1.5-flash'
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+        
+        const response = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ contents: [{ parts: parts }] })
         });
 
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            console.error("Gemini API Error:", errorData);
+            return res.status(response.status).json(errorData);
+        }
+
+        const data = await response.json();
+        return res.status(200).json(data);
+
     } catch (error) {
+        console.error("Server Error:", error);
         return res.status(500).json({ error: error.message });
     }
 }
