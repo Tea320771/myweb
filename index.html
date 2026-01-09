@@ -481,5 +481,35 @@
         </div>
     </div>
 </div>
+<div id="fee-check-modal" class="modal hidden">
+    <div class="modal-content">
+        <div class="modal-header" style="background:var(--color-scrivener);">
+            <h3>비용 성격 확인</h3>
+        </div>
+        <div class="modal-body">
+            <p id="fee-modal-desc" style="font-size: 1.1rem; margin-bottom: 20px; word-break: keep-all;">
+                이체내역에서 금액을 발견했습니다.
+            </p>
+            
+            <div class="fee-display-box" style="background:#f0fdf4; padding:15px; border-radius:8px; margin-bottom:25px; border:1px solid #bbf7d0;">
+                <div style="font-size:0.9rem; color:#166534; margin-bottom:5px;">발견된 금액</div>
+                <div id="fee-amount-display" style="font-size:1.8rem; font-weight:900; color:#15803d;">-</div>
+                <div id="fee-level-display" style="font-size:0.9rem; color:#6b7280; margin-top:5px;">(추정 심급: -)</div>
+            </div>
+
+            <div style="display:flex; flex-direction:column; gap:10px;">
+                <button class="btn-start" onclick="resolveFee('start')" style="margin:0; background:var(--color-lawyer);">
+                    착수금으로 등록
+                </button>
+                <button class="btn-start" onclick="resolveFee('success')" style="margin:0; background:#059669;">
+                    성공보수로 등록
+                </button>
+                <button class="btn-manual-trigger" onclick="resolveFee('skip')" style="width:100%; margin:0;">
+                    건너뛰기 (해당 없음)
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
 </body>
 </html>

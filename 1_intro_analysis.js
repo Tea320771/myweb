@@ -1,6 +1,7 @@
 /* ==========================================
    1_intro_analysis.js
-   - [UPDATE] 진단 모드(Diagnostic) 결과 표시 기능 추가
+   - [UPDATE] 진단 모드 제거 (Gemini 2.0 확정)
+   - [UPDATE] 이체내역 확인을 '예쁜 모달'로 변경 (Sequential UI)
    ========================================== */
 
 // --- 1. 기본 보안 및 초기화 설정 ---
@@ -29,6 +30,10 @@ window.addEventListener('DOMContentLoaded', function() {
 let queuedFiles = [];       
 let aiExtractedData = {};   
 const pageOrder = ['introPage', 'caseInfoPage', 'calcPage', 'evidencePage', 'previewPage'];
+
+// [NEW] 이체내역 검토를 위한 상태 변수
+let feeReviewQueue = [];
+let feeReviewIndex = 0;
 
 // --- 2. 네비게이션 및 공통 UI 로직 ---
 function playTransition(message, callback) {
@@ -126,7 +131,7 @@ function removeFile(index) {
     document.getElementById('docInput').value = ""; 
 }
 
-// --- [핵심] 4. 파일 변환 및 Gemini API 호출 로직 ---
+// --- 4. 분석 시작 ---
 async function startAnalysis() {
     if (queuedFiles.length === 0) { alert("분석할 파일이 없습니다."); return; }
     
@@ -135,16 +140,33 @@ async function startAnalysis() {
     
     actionArea.classList.add('hidden'); 
     logsContainer.style.display = 'block';
-    logsContainer.innerHTML = `<div class="log-item log-info">AI 분석 엔진(Gemini) 준비 중...</div>`;
+    logsContainer.innerHTML = `<div class="log-item log-info">AI 분석 엔진(Gemini 2.0) 준비 중...</div>`;
 
     try {
         let parts = [];
         
-        // 시스템 프롬프트 설정
+        // 시스템 프롬프트 (기존 유지)
         const systemPrompt = `
         너는 유능한 법률 사무원이야. 제공된 법률 문서 이미지들을 분석해서 소송비용확정신청에 필요한 정보를 JSON 포맷으로 추출해줘.
-        (이하 생략 - 백엔드에서 처리됨)
-        반드시 JSON 형식의 텍스트만 응답해줘.
+        
+        [분석 원칙]
+        1. '판결문' > '사건위임계약서' > '이체내역' 순서로 신뢰해라.
+        2. 당사자(원고, 피고)와 주소를 정확히 찾아라.
+        3. 비용 부담자(승패소)를 파악해 'winnerSide'('plaintiff' 또는 'defendant')에 명시해라.
+        4. 각 심급별 판결선고일, 착수금, 성공보수, 소가 등을 추출해라.
+        5. 'ambiguousAmounts'에는 이체내역 중 착수금/성공보수로 추정되나 확신할 수 없는 금액을 넣어라.
+        
+        [JSON 구조]
+        {
+          "plaintiffName": "...", "plaintiffAddr": "...",
+          "defendantName": "...", "defendantAddr": "...",
+          "winnerSide": "...",
+          "courtName1": "...", "caseNo1": "...", "rulingDate1": "...", "startFee1": "...", "successFee1": "...", "soga1": "...",
+          "courtName2": "...", "caseNo2": "...", "rulingDate2": "...", "startFee2": "...", "successFee2": "...",
+          "courtName3": "...", "caseNo3": "...", "rulingDate3": "...", "startFee3": "...", "successFee3": "...",
+          "ambiguousAmounts": [ {"amount": "금액", "level": "추정심급(없으면 common)"} ]
+        }
+        반드시 JSON만 응답해.
         `;
 
         parts.push({ text: systemPrompt });
@@ -152,35 +174,21 @@ async function startAnalysis() {
         for (let i = 0; i < queuedFiles.length; i++) {
             const file = queuedFiles[i];
             logsContainer.innerHTML += `<div class="log-item log-info">📂 파일 읽는 중... (${file.name})</div>`;
-            
             const base64Data = await fileToBase64(file);
-            const mimeType = file.type;
-            
             parts.push({
-                inline_data: {
-                    mime_type: mimeType,
-                    data: base64Data
-                }
+                inline_data: { mime_type: file.type, data: base64Data }
             });
         }
         
         logsContainer.innerHTML += `<div class="log-item log-info" style="font-weight:bold;">🤖 Google Gemini가 문서를 분석 중입니다...</div>`;
         logsContainer.scrollTop = logsContainer.scrollHeight;
 
-        // 백엔드 호출
         aiExtractedData = await callBackendFunction(parts);
 
-        // 🚨 [진단 결과 표시 로직 추가] 
-        // 백엔드에서 에러 진단 정보를 보내왔다면, 이를 알림창으로 띄웁니다.
-        if (aiExtractedData.error_diagnosis) {
-            logsContainer.innerHTML += `<div class="log-item log-warning">⚠️ 모델 진단 결과 수신됨</div>`;
-            const diagMsg = `[⚠️ Google Gemini 모델 진단 결과]\n\n${aiExtractedData.message}\n\n[✅ 내 키로 사용 가능한 모델 목록]\n${aiExtractedData.available_models}\n\n[💡 해결 방법]\n${aiExtractedData.advice}`;
-            alert(diagMsg);
-            return; // 분석 중단
-        }
-
         logsContainer.innerHTML += `<div class="log-item log-success" style="font-weight:bold;">✨ AI 분석 완료! 결과 확인</div>`;
-        setTimeout(() => { confirmApplicantProcess(aiExtractedData); }, 800);
+        
+        // [변경] 바로 모달을 띄우지 않고, 검토 프로세스 시작
+        setTimeout(() => { startDataReview(aiExtractedData); }, 800);
 
     } catch (error) {
         console.error(error);
@@ -190,10 +198,8 @@ async function startAnalysis() {
     }
 }
 
-// --- [UPDATE] 백엔드(Vercel Function) 호출 함수 ---
 async function callBackendFunction(parts) {
     const url = '/api/analyze'; 
-    
     const response = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -202,57 +208,108 @@ async function callBackendFunction(parts) {
 
     if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        const errorMessage = (errorData.error && errorData.error.message) ? errorData.error.message.toLowerCase() : "";
-        const status = response.status;
-
-        if (status === 429 || (errorData.error && String(errorData.error).includes("429"))) {
-            if (errorMessage.includes("day") || errorMessage.includes("daily") || errorMessage.includes("quota")) {
-                 throw new Error("하루 할당량이 초과하였어요. 내일 다시 시도해주세요.");
-            } else {
-                throw new Error("1분 후 다시 시도해주세요.");
-            }
+        if (response.status === 429) {
+             throw new Error("요청이 너무 많습니다. 1분만 기다렸다가 다시 시도해주세요.");
         }
-        
-        throw new Error(`분석 서버 오류 (${status}): ${errorMessage || "알 수 없는 오류"}`);
+        throw new Error(`서버 오류 (${response.status})`);
     }
 
     const result = await response.json();
-    
-    if (!result.candidates || result.candidates.length === 0) {
-        throw new Error("AI 분석 결과가 비어있습니다.");
-    }
+    if (!result.candidates || result.candidates.length === 0) throw new Error("분석 결과가 없습니다.");
 
     let rawText = result.candidates[0].content.parts[0].text;
     rawText = rawText.replace(/```json/g, "").replace(/```/g, "").trim();
     
-    try {
-        return JSON.parse(rawText);
-    } catch (e) {
-        console.error("JSON Parsing Error:", e);
-        throw new Error("AI 응답을 처리하는 데 실패했습니다.");
-    }
+    return JSON.parse(rawText);
 }
 
-// Helper: 파일을 Base64 문자열로 변환
 function fileToBase64(file) {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.readAsDataURL(file);
-        reader.onload = () => {
-            const base64String = reader.result.split(',')[1];
-            resolve(base64String);
-        };
+        reader.onload = () => resolve(reader.result.split(',')[1]);
         reader.onerror = (error) => reject(error);
     });
 }
 
+// --- 5. 데이터 검토 및 이체내역 확인 (모달 연동) ---
+
+function startDataReview(data) {
+    // 1. 이체내역(ambiguousAmounts)이 있으면 큐에 담고 모달 시작
+    if (data.ambiguousAmounts && data.ambiguousAmounts.length > 0) {
+        // 중복 제거
+        const uniqueFees = [];
+        const seen = new Set();
+        data.ambiguousAmounts.forEach(item => {
+            if (!seen.has(item.amount)) {
+                seen.add(item.amount);
+                uniqueFees.push(item);
+            }
+        });
+        
+        feeReviewQueue = uniqueFees;
+        feeReviewIndex = 0;
+        
+        if (feeReviewQueue.length > 0) {
+            showFeeReviewModal(); // 이체내역 모달 띄우기
+        } else {
+            showApplicantModal(data); // 없으면 바로 당사자 확인
+        }
+    } else {
+        showApplicantModal(data);
+    }
+}
+
+// [NEW] 이체내역 확인 모달 표시 함수
+function showFeeReviewModal() {
+    if (feeReviewIndex >= feeReviewQueue.length) {
+        // 모든 검토가 끝나면 모달 닫고 당사자 확인으로 이동
+        document.getElementById('fee-check-modal').classList.add('hidden');
+        showApplicantModal(aiExtractedData);
+        return;
+    }
+
+    const currentItem = feeReviewQueue[feeReviewIndex];
+    const levelText = (currentItem.level !== 'common') ? `${currentItem.level}심` : "심급 미상";
+
+    // 모달 내용 업데이트
+    document.getElementById('fee-amount-display').innerText = currentItem.amount;
+    document.getElementById('fee-level-display').innerText = `(AI 추정: ${levelText})`;
+    
+    // 모달 표시
+    document.getElementById('fee-check-modal').classList.remove('hidden');
+}
+
+// [NEW] 버튼 클릭 시 처리 함수
+function resolveFee(action) {
+    const currentItem = feeReviewQueue[feeReviewIndex];
+    const data = aiExtractedData;
+    
+    // 심급 결정 (추정된 것이 있으면 그것을, 없으면 순서대로)
+    let targetLevel = currentItem.level;
+    if (targetLevel === 'common') {
+        // 1심부터 비어있는 곳 찾기
+        if (!data.startFee1) targetLevel = 1;
+        else if (!data.startFee2) targetLevel = 2;
+        else targetLevel = 3;
+    }
+
+    if (action === 'start') {
+        // 착수금으로 등록
+        data['startFee' + targetLevel] = currentItem.amount;
+    } else if (action === 'success') {
+        // 성공보수로 등록
+        data['successFee' + targetLevel] = currentItem.amount;
+    }
+    // 'skip'이면 아무것도 안함
+
+    // 다음 항목으로 이동
+    feeReviewIndex++;
+    showFeeReviewModal();
+}
+
 // --- 6. 신청인 확인 및 데이터 주입 ---
-function confirmApplicantProcess(data) {
-    // 진단 모드일 경우 이 함수가 실행되면 안 되지만, 안전장치
-    if (data.error_diagnosis) return;
-
-    processAmbiguousFees(data);
-
+function showApplicantModal(data) {
     let extractedPlaintiff = data.plaintiffName || "원고(미확인)";
     let extractedDefendant = data.defendantName || "피고(미확인)";
     
@@ -260,31 +317,6 @@ function confirmApplicantProcess(data) {
     document.getElementById('modal-defendant-name').innerText = extractedDefendant;
     
     document.getElementById('applicant-selection-modal').classList.remove('hidden');
-}
-
-function processAmbiguousFees(data) {
-    if (!data.ambiguousAmounts || data.ambiguousAmounts.length === 0) return;
-    let handledAmounts = [];
-    data.ambiguousAmounts.forEach(item => {
-        if (handledAmounts.includes(item.amount)) return;
-        let assigned = false;
-        const amt = item.amount;
-        const levelText = (item.level !== 'common') ? `${item.level}심` : "심급 미상";
-
-        if (item.level !== 'common' && data['startFee' + item.level]) return;
-
-        if (item.level !== 'common') {
-            if (confirm(`[AI 분석]\n금액 '${amt}원'이 발견되었습니다 (${levelText} 추정).\n이 금액을 '${item.level}심 착수금'으로 입력하시겠습니까?`)) {
-                data['startFee' + item.level] = amt;
-                assigned = true;
-            }
-        } else {
-            if (!data.startFee1 && confirm(`금액 '${amt}원'을 '1심 착수금'으로 설정할까요?`)) { data.startFee1 = amt; }
-            else if (!data.startFee2 && confirm(`금액 '${amt}원'을 '2심 착수금'으로 설정할까요?`)) { data.startFee2 = amt; }
-            else if (!data.startFee3 && confirm(`금액 '${amt}원'을 '3심 착수금'으로 설정할까요?`)) { data.startFee3 = amt; }
-        }
-        handledAmounts.push(amt);
-    });
 }
 
 function selectApplicant(selectionSide) {
