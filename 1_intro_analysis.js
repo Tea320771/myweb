@@ -3,7 +3,7 @@
    - 기본 설정, 네비게이션, 파일 업로드
    - [UPDATE] 판결문/계약서 구분 및 사건번호 우선순위 적용
    - [UPDATE] 이체내역(송금) 금액 추출 및 사용자 확인 로직
-   - [UPDATE] 판결문 당사자(이름/주소) 및 판결선고일 정밀 추출 로직 강화
+   - [UPDATE] 판결문 당사자(이름/주소) 및 판결선고일 정밀 추출 로직 강화 (공백/줄바꿈 대응)
    ========================================== */
 
 // ✅ 사용자가 제공한 OCR.space API 키 적용
@@ -142,7 +142,6 @@ async function startAnalysis() {
     logsContainer.style.display = 'block';
     logsContainer.innerHTML = `<div class="log-item log-info">분석 엔진(OCR.space) 연결 중...</div>`;
     
-    // 심급별 텍스트 저장용 (판결문과 일반 문서를 분리하여 저장)
     let categorizedText = { 
         1: { jud: "", etc: "" }, 
         2: { jud: "", etc: "" }, 
@@ -182,10 +181,10 @@ async function startAnalysis() {
                 result.ParsedResults.forEach(page => { extractedText += " " + page.ParsedText; });
             }
 
+            // [수정] 줄바꿈을 공백 하나로 치환하되, 너무 많은 공백은 하나로 줄임
             const normalizedText = extractedText.replace(/\r\n|\n|\r/g, ' ').replace(/\s+/g, ' ');
             console.log(`[${file.name}] 추출 텍스트:`, normalizedText);
 
-            // 심급 추정
             let targetInstance = 'common';
             if (file.name.includes("1심") || file.name.includes("지방")) targetInstance = 1;
             else if (file.name.includes("2심") || file.name.includes("항소") || file.name.includes("고등")) targetInstance = 2;
@@ -196,8 +195,7 @@ async function startAnalysis() {
                 else if (normalizedText.includes("대법원")) targetInstance = 3;
             }
 
-            // 문서 종류 판별 (판결문 vs 계약서/이체내역)
-            const isJudgment = normalizedText.includes("판결") && (normalizedText.includes("주문") || normalizedText.includes("이유"));
+            const isJudgment = normalizedText.includes("판결") && (normalizedText.includes("주문") || normalizedText.includes("이유") || normalizedText.includes("사건"));
 
             if (targetInstance !== 'common') {
                 if (isJudgment) {
@@ -228,7 +226,7 @@ async function startAnalysis() {
     }
 }
 
-// --- [핵심] 5. 데이터 추출 알고리즘 (판결문 주소/당사자/선고일 정밀 파악) ---
+// --- [핵심] 5. 데이터 추출 알고리즘 (판결문 주소/당사자/선고일 정밀 파악 수정) ---
 function analyzeLegalDocuments(categorizedText) {
     const result = {
         courtName1: null, caseNo1: null, rulingDate1: null,
@@ -281,44 +279,65 @@ function analyzeLegalDocuments(categorizedText) {
             }
         }
 
-        // (3) [NEW] 판결선고일 추출
+        // (3) [수정] 판결선고일 추출 (OCR 공백/오류 대응 강화)
+        // "판결 선 고", "선 고", "2025. 7. 25. 선고" 등 다양한 패턴 허용
         if (isJudgmentSource) {
-             const dateRegex = /(?:판결)?선\s*고\s*(20\d{2}\.\s*\d{1,2}\.\s*\d{1,2}\.?)/;
-             const dateMatch = text.match(dateRegex);
+             // 패턴1: "판결선고 2024.10.10" 또는 "선고 2024.10.10" (날짜 사이 공백 유연하게)
+             const dateRegex1 = /(?:판결)?선\s*고\s*((?:20\d{2})\.\s*\d{1,2}\.\s*\d{1,2}\.?)/;
+             // 패턴2: "2025. 7. 25. 선고" (대법원 또는 일부 판결문 스타일)
+             const dateRegex2 = /((?:20\d{2})\.\s*\d{1,2}\.\s*\d{1,2}\.?)\s*선\s*고/;
+             
+             let dateMatch = text.match(dateRegex1) || text.match(dateRegex2);
              if (dateMatch) {
                  result['rulingDate' + level] = dateMatch[1];
              }
         }
         
-        // (4) [NEW] 당사자(이름, 주소) 정밀 추출 (판결문 헤더 블록 분석)
+        // (4) [수정] 당사자(이름, 주소) 정밀 추출
+        // OCR 결과가 섞일 수 있으므로 "원고" 키워드 주변과 "피고" 키워드 주변을 넓게 탐색
         if (isJudgmentSource) {
-            // 원고/피고 구역을 나누어 분석
-            const pStart = text.search(/원\s*고|항\s*소\s*인|상\s*고\s*인|신\s*청\s*인/);
-            const dStart = text.search(/피\s*고|피\s*항\s*소\s*인|피\s*상\s*고\s*인|피\s*신\s*청\s*인/);
-            const endLimit = text.search(/주\s*문|청\s*구\s*취\s*지|변\s*론\s*종\s*결/);
+            // 이름 패턴: 2~5글자 한글, 변호사/법무법인 제외
+            const nameRegex = /([가-힣]{2,5})(?!\s*변호사|\s*법무법인|\s*소송대리인)/;
+            // 주소 패턴: 시/도/군/구 + 로/길/동/리 + 번지수 (광범위 매칭)
+            const addrRegex = /((?:서울|부산|대구|인천|광주|대전|울산|세종|경기|강원|충북|충남|전북|전남|경북|경남|제주)[가-힣]*\s*(?:[가-힣]{1,10}(?:시|군|구))?\s*[가-힣0-9\s·]+(?:로|길|동|읍|면|리)\s*[\d]+(?:-[\d]+)?)/;
+
+            // 1. 원고(신청인/항소인) 정보 찾기
+            const plaintiffKeywordRegex = /(?:원\s*고|항\s*소\s*인|상\s*고\s*인|신\s*청\s*인)[^가-힣]*([가-힣]{2,5})/;
+            const pMatch = text.match(plaintiffKeywordRegex);
+            if (pMatch && !result.plaintiffName) {
+                // 키워드 바로 뒤에 이름이 온 경우
+                const potentialName = pMatch[1];
+                if (!potentialName.includes("변호사") && !potentialName.includes("법무")) {
+                    result.plaintiffName = potentialName;
+                }
+            }
+
+            // 2. 피고(상대방/피항소인) 정보 찾기
+            const defendantKeywordRegex = /(?:피\s*고|피\s*항\s*소\s*인|피\s*상\s*고\s*인|피\s*신\s*청\s*인)[^가-힣]*([가-힣]{2,5})/;
+            const dMatch = text.match(defendantKeywordRegex);
+            if (dMatch && !result.defendantName) {
+                const potentialName = dMatch[1];
+                if (!potentialName.includes("변호사") && !potentialName.includes("법무")) {
+                    result.defendantName = potentialName;
+                }
+            }
             
-            // 이름 추출용 정규식 (2~5글자 한글)
-            const nameRegex = /([가-힣]{2,5})(?!\s*변호사|\s*법무법인)/;
-            // 주소 추출용 정규식 (시/도/군/구 + 로/길/동/리 + 숫자)
-            const addrRegex = /([가-힣]{1,5}(?:시|도)\s+(?:[가-힣]{1,5}(?:시|군|구)\s+)?[가-힣0-9\s]+(?:로|길|동|읍|면)[^0-9\n]*\d+(?:-\d+)?)/;
-
-            if (pStart !== -1 && dStart !== -1 && dStart > pStart) {
-                // 원고 블록 (원고 시작 ~ 피고 시작 전)
-                const pBlock = text.substring(pStart, dStart);
-                const pNameMatch = pBlock.replace(/원\s*고|항\s*소\s*인|상\s*고\s*인/g, "").match(nameRegex);
-                const pAddrMatch = pBlock.match(addrRegex);
+            // 3. 주소 찾기 (이름 근처 혹은 문서 상단의 주소 패턴 스캔)
+            // 전체 텍스트에서 주소 패턴들을 모두 찾아서, 원고/피고 이름 근처에 있는 것을 매핑하는 것이 이상적이나
+            // OCR 순서가 뒤섞인 경우 첫 번째 발견 주소 -> 원고, 두 번째 -> 피고로 추정 (일반적 순서)
+            if (!result.plaintiffAddr || !result.defendantAddr) {
+                let allAddresses = [];
+                let m;
+                // global flag regex for address
+                const globalAddrRegex = new RegExp(addrRegex, 'g');
+                while ((m = globalAddrRegex.exec(text)) !== null) {
+                    // 주소가 너무 짧거나(5자 미만) 법원 주소(남양주지원 등)인 경우 제외 로직 필요하면 추가
+                    if (m[1].length > 8) allAddresses.push(m[1]);
+                }
                 
-                if (pNameMatch && !result.plaintiffName) result.plaintiffName = pNameMatch[1];
-                if (pAddrMatch && !result.plaintiffAddr) result.plaintiffAddr = pAddrMatch[1];
-
-                // 피고 블록 (피고 시작 ~ 주문 등 끝부분 전)
-                const endPoint = (endLimit !== -1) ? endLimit : text.length;
-                const dBlock = text.substring(dStart, endPoint);
-                const dNameMatch = dBlock.replace(/피\s*고|피\s*항\s*소\s*인|피\s*상\s*고\s*인/g, "").match(nameRegex);
-                const dAddrMatch = dBlock.match(addrRegex);
-
-                if (dNameMatch && !result.defendantName) result.defendantName = dNameMatch[1];
-                if (dAddrMatch && !result.defendantAddr) result.defendantAddr = dAddrMatch[1];
+                // 보통 판결문 상단에 원고 주소 먼저, 그 다음 피고 주소가 나옴
+                if (allAddresses.length > 0 && !result.plaintiffAddr) result.plaintiffAddr = allAddresses[0];
+                if (allAddresses.length > 1 && !result.defendantAddr) result.defendantAddr = allAddresses[1];
             }
         }
 
@@ -507,14 +526,14 @@ function fillRemainingData(data) {
 
     if(data.courtName1) setAndTrigger('courtName1', data.courtName1);
     if(data.caseNo1) setAndTrigger('caseNo1', data.caseNo1);
-    if(data.rulingDate1) setAndTrigger('rulingDate1', data.rulingDate1); // [NEW] 선고일 입력
+    if(data.rulingDate1) setAndTrigger('rulingDate1', data.rulingDate1); 
     if(data.soga1) setAndTrigger('soga1', data.soga1);
     if(data.startFee1) setAndTrigger('startFee1', data.startFee1);
     if(data.successFee1) setAndTrigger('successFee1', data.successFee1);
 
     if(data.courtName2) setAndTrigger('courtName2', data.courtName2);
     if(data.caseNo2) setAndTrigger('caseNo2', data.caseNo2);
-    if(data.rulingDate2) setAndTrigger('rulingDate2', data.rulingDate2); // [NEW] 선고일 입력
+    if(data.rulingDate2) setAndTrigger('rulingDate2', data.rulingDate2); 
     if(data.soga2) setAndTrigger('soga2', data.soga2);
     if(data.startFee2) setAndTrigger('startFee2', data.startFee2);
     if(data.successFee2) setAndTrigger('successFee2', data.successFee2);
@@ -523,7 +542,7 @@ function fillRemainingData(data) {
     else if(data.caseNo3) setAndTrigger('courtName3', '대법원'); 
     
     if(data.caseNo3) setAndTrigger('caseNo3', data.caseNo3);
-    if(data.rulingDate3) setAndTrigger('rulingDate3', data.rulingDate3); // [NEW] 선고일 입력
+    if(data.rulingDate3) setAndTrigger('rulingDate3', data.rulingDate3); 
     if(data.startFee3) setAndTrigger('startFee3', data.startFee3);
     if(data.successFee3) setAndTrigger('successFee3', data.successFee3);
 }
