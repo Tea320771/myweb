@@ -1,10 +1,7 @@
 /* ==========================================
    1_intro_analysis.js
-   - [UPDATE] API Key 노출 방지를 위한 Vercel Serverless Function 호출 방식으로 변경
+   - [UPDATE] 진단 모드(Diagnostic) 결과 표시 기능 추가
    ========================================== */
-
-// ❌ 기존 API Key 변수는 삭제합니다. (보안상 절대 코드에 남기지 마세요)
-// const GEMINI_API_KEY = '...'; 
 
 // --- 1. 기본 보안 및 초기화 설정 ---
 document.addEventListener('contextmenu', function (e) { e.preventDefault(); alert("보안 정책상 우클릭을 사용할 수 없습니다."); });
@@ -145,38 +142,9 @@ async function startAnalysis() {
         
         // 시스템 프롬프트 설정
         const systemPrompt = `
-        너는 유능한 법률 사무원이야. 제공된 법률 문서 이미지(판결문, 사건위임계약서, 이체내역)들을 종합적으로 분석해서 소송비용확정신청에 필요한 정보를 JSON 포맷으로 추출해줘.
-        
-        [분석 원칙]
-        1. **우선순위:** 정보가 충돌하면 '판결문' > '사건위임계약서' > '이체내역' 순서로 신뢰해라.
-        2. **당사자 파악:** 판결문의 당사자 표시(원고, 피고)와 주소를 정확히 찾아라. 주소가 흩어져 있어도 문맥을 보고 합쳐라.
-        3. **비용 부담자(승패소):** 판결문 '주문'을 분석하여 소송비용 부담자를 파악하고, 비용을 받는 승소자(권리자)를 'winnerSide'('plaintiff' 또는 'defendant')에 명시해라.
-           - 예: "소송비용은 원고가 부담한다" -> 승소자는 피고(defendant)
-        4. **판결선고일:** 판결문의 '선고일' 또는 '판결선고' 날짜를 찾아라. (예: 2024. 10. 10.)
-        5. **금전 분석:** '법무법인' 등에 송금된 내역 중 착수금/성공보수로 추정되는 금액을 찾아라.
-           - 심급(1,2,3심)을 문서 내용으로 추정할 수 있으면 할당하고, 모르면 'ambiguousAmounts'에 넣어라.
-        
-        [추출할 JSON 필드]
-        {
-          "plaintiffName": "원고 이름",
-          "plaintiffAddr": "원고 주소 (도로명 주소 등)",
-          "defendantName": "피고 이름",
-          "defendantAddr": "피고 주소 (도로명 주소 등)",
-          "winnerSide": "plaintiff" 또는 "defendant",
-          
-          "courtName1": "1심 법원명", "caseNo1": "1심 사건번호", "rulingDate1": "1심 선고일(YYYY. MM. DD.)",
-          "courtName2": "2심 법원명", "caseNo2": "2심 사건번호", "rulingDate2": "2심 선고일",
-          "courtName3": "3심 법원명", "caseNo3": "3심 사건번호", "rulingDate3": "3심 선고일",
-          
-          "startFee1": "1심 착수금(숫자만)", "successFee1": "1심 성공보수(숫자만)",
-          "startFee2": "2심 착수금", "successFee2": "2심 성공보수",
-          "startFee3": "3심 착수금", "successFee3": "3심 성공보수",
-          "soga1": "소가(숫자만)",
-          
-          "ambiguousAmounts": [ {"amount": "금액", "level": "추정심급(없으면 common)"} ]
-        }
-        
-        반드시 JSON 형식의 텍스트만 응답해줘. 코드블록(\`\`\`) 없이 순수 JSON만 반환해.
+        너는 유능한 법률 사무원이야. 제공된 법률 문서 이미지들을 분석해서 소송비용확정신청에 필요한 정보를 JSON 포맷으로 추출해줘.
+        (이하 생략 - 백엔드에서 처리됨)
+        반드시 JSON 형식의 텍스트만 응답해줘.
         `;
 
         parts.push({ text: systemPrompt });
@@ -199,8 +167,17 @@ async function startAnalysis() {
         logsContainer.innerHTML += `<div class="log-item log-info" style="font-weight:bold;">🤖 Google Gemini가 문서를 분석 중입니다...</div>`;
         logsContainer.scrollTop = logsContainer.scrollHeight;
 
-        // [변경] 직접 API 호출이 아닌, 우리가 만든 백엔드(/api/analyze)를 호출함
+        // 백엔드 호출
         aiExtractedData = await callBackendFunction(parts);
+
+        // 🚨 [진단 결과 표시 로직 추가] 
+        // 백엔드에서 에러 진단 정보를 보내왔다면, 이를 알림창으로 띄웁니다.
+        if (aiExtractedData.error_diagnosis) {
+            logsContainer.innerHTML += `<div class="log-item log-warning">⚠️ 모델 진단 결과 수신됨</div>`;
+            const diagMsg = `[⚠️ Google Gemini 모델 진단 결과]\n\n${aiExtractedData.message}\n\n[✅ 내 키로 사용 가능한 모델 목록]\n${aiExtractedData.available_models}\n\n[💡 해결 방법]\n${aiExtractedData.advice}`;
+            alert(diagMsg);
+            return; // 분석 중단
+        }
 
         logsContainer.innerHTML += `<div class="log-item log-success" style="font-weight:bold;">✨ AI 분석 완료! 결과 확인</div>`;
         setTimeout(() => { confirmApplicantProcess(aiExtractedData); }, 800);
@@ -215,13 +192,12 @@ async function startAnalysis() {
 
 // --- [UPDATE] 백엔드(Vercel Function) 호출 함수 ---
 async function callBackendFunction(parts) {
-    // Vercel 등에 배포하면 이 경로가 백엔드 함수가 됩니다.
     const url = '/api/analyze'; 
     
     const response = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ parts: parts }) // Gemini Key 없이 데이터만 보냄
+        body: JSON.stringify({ parts: parts })
     });
 
     if (!response.ok) {
@@ -229,14 +205,9 @@ async function callBackendFunction(parts) {
         const errorMessage = (errorData.error && errorData.error.message) ? errorData.error.message.toLowerCase() : "";
         const status = response.status;
 
-        // 429 에러 처리 로직 (백엔드에서 전달받은 에러)
         if (status === 429 || (errorData.error && String(errorData.error).includes("429"))) {
-            if (errorMessage.includes("day") || errorMessage.includes("daily") || errorMessage.includes("quota") || errorMessage.includes("exhausted")) {
-                 if (errorMessage.includes("minute") || errorMessage.includes("rate")) {
-                     throw new Error("1분 후 다시 시도해주세요.");
-                 } else {
-                     throw new Error("하루 할당량이 초과하였어요. 내일 다시 시도해주세요.");
-                 }
+            if (errorMessage.includes("day") || errorMessage.includes("daily") || errorMessage.includes("quota")) {
+                 throw new Error("하루 할당량이 초과하였어요. 내일 다시 시도해주세요.");
             } else {
                 throw new Error("1분 후 다시 시도해주세요.");
             }
@@ -277,6 +248,9 @@ function fileToBase64(file) {
 
 // --- 6. 신청인 확인 및 데이터 주입 ---
 function confirmApplicantProcess(data) {
+    // 진단 모드일 경우 이 함수가 실행되면 안 되지만, 안전장치
+    if (data.error_diagnosis) return;
+
     processAmbiguousFees(data);
 
     let extractedPlaintiff = data.plaintiffName || "원고(미확인)";
@@ -285,10 +259,6 @@ function confirmApplicantProcess(data) {
     document.getElementById('modal-plaintiff-name').innerText = extractedPlaintiff; 
     document.getElementById('modal-defendant-name').innerText = extractedDefendant;
     
-    if (data.winnerSide) {
-        console.log(`AI 분석 결과: 승소자는 ${data.winnerSide} 입니다.`);
-    }
-
     document.getElementById('applicant-selection-modal').classList.remove('hidden');
 }
 
