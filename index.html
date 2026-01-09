@@ -511,5 +511,70 @@
         </div>
     </div>
 </div>
+<div id="fee-check-modal" class="modal hidden">
+    <div class="modal-content" style="max-width: 550px;">
+        <div class="modal-header" style="background:var(--color-scrivener);">
+            <h3>비용 정보 확인이 필요해요</h3>
+        </div>
+        <div class="modal-body">
+            <p id="fee-modal-desc" style="font-size: 1.05rem; margin-bottom: 20px; color:#374151; word-break: keep-all;">
+                AI가 이체내역을 발견했지만, 정확한 용도를 파악하기 어렵습니다.<br>
+                아래 내용을 직접 선택해주세요.
+            </p>
+            
+            <div class="fee-display-box" style="background:#f0fdf4; padding:15px; border-radius:8px; margin-bottom:25px; border:1px solid #bbf7d0;">
+                <div style="font-size:0.9rem; color:#166534; margin-bottom:5px;">발견된 금액</div>
+                <div id="fee-amount-display" style="font-size:2rem; font-weight:900; color:#15803d;">-</div>
+            </div>
+
+            <div style="margin-bottom: 20px; text-align: left;">
+                <div style="font-weight:bold; color:#4b5563; margin-bottom:8px;">1. 어느 심급의 비용인가요?</div>
+                <div style="display:flex; gap:10px;">
+                    <label class="radio-btn-label">
+                        <input type="radio" name="feeLevel" value="1" checked>
+                        <span>1심</span>
+                    </label>
+                    <label class="radio-btn-label">
+                        <input type="radio" name="feeLevel" value="2">
+                        <span>2심</span>
+                    </label>
+                    <label class="radio-btn-label">
+                        <input type="radio" name="feeLevel" value="3">
+                        <span>3심</span>
+                    </label>
+                </div>
+            </div>
+
+            <div style="text-align: left;">
+                <div style="font-weight:bold; color:#4b5563; margin-bottom:8px;">2. 어떤 명목인가요?</div>
+                <div style="display:flex; gap:10px;">
+                    <button class="btn-start" onclick="resolveFee('start')" style="margin:0; flex:1; background:var(--color-lawyer);">
+                        변호사 착수금
+                    </button>
+                    <button class="btn-start" onclick="resolveFee('success')" style="margin:0; flex:1; background:#059669;">
+                        변호사 성공보수
+                    </button>
+                </div>
+            </div>
+
+            <button class="btn-manual-trigger" onclick="resolveFee('skip')" style="width:100%; margin-top:20px;">
+                해당 없음 (건너뛰기)
+            </button>
+        </div>
+    </div>
+</div>
+
+<style>
+/* 라디오 버튼을 버튼처럼 보이게 하는 스타일 (style.css에 넣어도 되지만 편의상 여기에 포함) */
+.radio-btn-label { flex: 1; position: relative; }
+.radio-btn-label input { position: absolute; opacity: 0; cursor: pointer; }
+.radio-btn-label span {
+    display: block; text-align: center; padding: 12px; border: 2px solid #e5e7eb;
+    border-radius: 8px; color: #6b7280; font-weight: bold; cursor: pointer; transition: all 0.2s;
+}
+.radio-btn-label input:checked + span {
+    border-color: var(--color-lawyer); background-color: #eff6ff; color: var(--color-lawyer);
+}
+</style>
 </body>
 </html>

@@ -1,8 +1,7 @@
 /* ==========================================
    1_intro_analysis.js
-   - [UPDATE] 프롬프트 강화: 파일명 기반 심급 추론, 청구취지 구분 명확화
-   - [FIX] 날짜 데이터 전달 오류 수정 (rulingDate -> date 매핑)
-   - [UPDATE] Gemini 모델명: models/gemini-flash-latest 사용
+   - [FIX] 피신청인 주소 입력 누락 수정
+   - [UPDATE] 불분명한 비용(심급/종류) 사용자 직접 선택 기능 추가
    ========================================== */
 
 // --- 1. 기본 보안 및 초기화 설정 ---
@@ -146,28 +145,21 @@ async function startAnalysis() {
     try {
         let parts = [];
         
-        // [수정됨] 프롬프트 강화: 파일명 우선 심급 판단 및 데이터 추출 기준 명확화
+        // 시스템 프롬프트 (파일명이 불분명하면 ambiguousAmounts에 넣도록 유도)
         const systemPrompt = `
-        너는 유능한 법률 사무원이야. 제공된 법률 문서 이미지(판결문, 이체내역 등)를 아주 정밀하게 분석해서 소송비용확정신청에 필요한 정보를 JSON 포맷으로 추출해줘.
+        너는 유능한 법률 사무원이야. 제공된 법률 문서 이미지(판결문, 이체내역 등)를 분석해서 소송비용확정신청에 필요한 정보를 JSON 포맷으로 추출해줘.
 
         [분석 지침]
-        1. **심급 추론 (중요)**: 
-           - **파일명(fileName)**에 '1심', '2심', '3심' 등의 단어가 포함되어 있다면, 해당 문서의 내용은 반드시 그 심급에 해당하는 정보로 처리해라. (예: '3심 이체 내역.pdf'의 금액은 3심 비용이다)
+        1. **심급 추론**: 파일명에 '1심', '2심' 등이 있으면 해당 심급으로 처리해라. 만약 **파일명이나 내용만으로 심급(1,2,3심)이나 비용 성격(착수금/성공보수)을 100% 확신할 수 없다면**, 무리하게 할당하지 말고 **'ambiguousAmounts' 리스트에 담아라.** (사용자에게 물어볼 것임)
            
-        2. **당사자 이름과 주소 필독**: 
-           - 판결문 당사자 목록에서 원고, 피고의 이름을 정확히 읽어라. (주의: '이을녀'를 '이슬녀'로 오인하지 않도록 획을 주의깊게 볼 것)
-           - 이름 바로 아래 또는 옆에 적힌 **도로명 주소**를 반드시 찾아내어 'plaintiffAddr', 'defendantAddr'에 기입해라. (주소 누락 금지)
+        2. **당사자 이름과 주소**: 판결문의 원고, 피고 이름과 **주소**를 정확히 찾아라. 주소는 필수다.
         
-        3. **판결선고일 추출**:
-           - 각 심급 판결문 상단에 있는 **'판결선고'** 또는 **'선고'** 옆 날짜(예: 2024. 10. 10.)를 찾아라.
+        3. **판결선고일**: 각 심급 판결문의 '판결선고' 날짜를 찾아라.
         
-        4. **소송목적의 값(소가) 추출 기준**:
-           - **1심 소가(soga1)**: 1심 판결문의 **[청구취지]** 란에 기재된 금액을 찾아라. (예: "피고는 원고에게 100,000,000원을..." -> 100000000)
-           - **2심 소가(soga2)**: 2심 판결문의 **[청구취지 및 항소취지]** 란에 기재된 금액을 찾아라.
-           - 금액은 '원' 단위를 제외한 숫자만 추출해라.
-
-        5. **비용 부담자**: '주문'을 보고 'winnerSide'('plaintiff' 또는 'defendant')를 명시해라.
-        6. **금액 추정**: 착수금/성공보수로 보이는 금액을 추출하되, 파일명 등으로 심급이 명확하면 'startFee2', 'startFee3' 등에 직접 할당하고, 불분명하면 'ambiguousAmounts'에 담아라.
+        4. **소가**: 
+           - 1심: [청구취지] 금액
+           - 2심: [청구취지 및 항소취지] 금액
+           - 금액은 숫자만 추출.
 
         [JSON 구조]
         {
@@ -188,8 +180,6 @@ async function startAnalysis() {
             const file = queuedFiles[i];
             logsContainer.innerHTML += `<div class="log-item log-info">📂 파일 읽는 중... (${file.name})</div>`;
             const base64Data = await fileToBase64(file);
-            
-            // 파일명 정보를 AI에게 함께 전달 (메타데이터 활용)
             parts.push({ text: `[파일정보: ${file.name}]` });
             parts.push({
                 inline_data: { mime_type: file.type, data: base64Data }
@@ -213,7 +203,6 @@ async function startAnalysis() {
     }
 }
 
-// --- 백엔드 호출 함수 ---
 async function callBackendFunction(parts) {
     const url = '/api/analyze'; 
     
@@ -246,9 +235,10 @@ function fileToBase64(file) {
     });
 }
 
-// --- 5. 데이터 검토 및 이체내역 확인 ---
+// --- 5. 데이터 검토 및 이체내역 확인 (모달 연동) ---
 
 function startDataReview(data) {
+    // ambiguousAmounts가 있으면 사용자 확인 절차 시작
     if (data.ambiguousAmounts && data.ambiguousAmounts.length > 0) {
         const uniqueFees = [];
         const seen = new Set();
@@ -273,6 +263,7 @@ function startDataReview(data) {
 }
 
 function showFeeReviewModal() {
+    // 모든 검토가 끝나면 당사자 확인으로 이동
     if (feeReviewIndex >= feeReviewQueue.length) {
         document.getElementById('fee-check-modal').classList.add('hidden');
         showApplicantModal(aiExtractedData);
@@ -280,29 +271,45 @@ function showFeeReviewModal() {
     }
 
     const currentItem = feeReviewQueue[feeReviewIndex];
-    const levelText = (currentItem.level !== 'common') ? `${currentItem.level}심` : "심급 미상";
-
+    
+    // 모달에 금액 표시
     document.getElementById('fee-amount-display').innerText = currentItem.amount;
-    document.getElementById('fee-level-display').innerText = `(AI 추정: ${levelText})`;
+    
+    // [NEW] 라디오 버튼 초기화 (기본값: AI가 추정한 레벨이 있으면 그곳에, 없으면 1심)
+    const aiGuessedLevel = (currentItem.level && currentItem.level !== 'common') ? currentItem.level.replace(/[^0-9]/g, '') : '1';
+    const radios = document.getElementsByName('feeLevel');
+    for(let r of radios) {
+        if(r.value === aiGuessedLevel) r.checked = true;
+    }
     
     document.getElementById('fee-check-modal').classList.remove('hidden');
 }
 
 function resolveFee(action) {
+    if (action === 'skip') {
+        feeReviewIndex++;
+        showFeeReviewModal();
+        return;
+    }
+
     const currentItem = feeReviewQueue[feeReviewIndex];
     const data = aiExtractedData;
     
-    let targetLevel = currentItem.level;
-    if (targetLevel === 'common') {
-        if (!data.startFee1) targetLevel = 1;
-        else if (!data.startFee2) targetLevel = 2;
-        else targetLevel = 3;
+    // [NEW] 사용자가 라디오 버튼으로 선택한 심급을 가져옴
+    let selectedLevel = '1';
+    const radios = document.getElementsByName('feeLevel');
+    for(let r of radios) {
+        if(r.checked) {
+            selectedLevel = r.value;
+            break;
+        }
     }
 
+    // 선택된 심급에 데이터 저장
     if (action === 'start') {
-        data['startFee' + targetLevel] = currentItem.amount;
+        data['startFee' + selectedLevel] = currentItem.amount;
     } else if (action === 'success') {
-        data['successFee' + targetLevel] = currentItem.amount;
+        data['successFee' + selectedLevel] = currentItem.amount;
     }
 
     feeReviewIndex++;
@@ -328,12 +335,17 @@ function selectApplicant(selectionSide) {
     const rightName = document.getElementById('modal-defendant-name').innerText;
 
     let finalAppName = "", finalRespName = "";
+    
+    // 선택에 따라 신청인/피신청인 배정
     if (selectionSide === 'plaintiff') { 
-        finalAppName = leftName; finalRespName = rightName;
+        finalAppName = leftName; 
+        finalRespName = rightName;
     } else { 
-        finalAppName = rightName; finalRespName = leftName;
+        finalAppName = rightName; 
+        finalRespName = leftName;
     }
 
+    // 신청인(채권자) 정보 입력
     if(finalAppName && !finalAppName.includes("미확인")) setAndTrigger('applicantName', finalAppName);
     
     if (selectionSide === 'plaintiff') {
@@ -342,10 +354,20 @@ function selectApplicant(selectionSide) {
         if (data.defendantAddr) setAndTrigger('applicantAddr', data.defendantAddr);
     }
 
+    // [FIX] 피신청인(채무자) 정보 입력 로직 추가
     if(finalRespName && !finalRespName.includes("미확인")) {
         document.getElementById('step3-area').classList.remove('hidden');
         document.getElementById('btnToCaseInfo').classList.remove('hidden');
         setAndTrigger('respondentName', finalRespName);
+        
+        // 피신청인 주소 자동 입력 (여기서 누락되었던 부분)
+        if (selectionSide === 'plaintiff') {
+            // 내가 원고라면, 피신청인은 피고이므로 defendantAddr 사용
+            if (data.defendantAddr) setAndTrigger('respondentAddr', data.defendantAddr);
+        } else {
+            // 내가 피고라면, 피신청인은 원고이므로 plaintiffAddr 사용
+            if (data.plaintiffAddr) setAndTrigger('respondentAddr', data.plaintiffAddr);
+        }
     }
 
     fillRemainingData(data);
@@ -363,15 +385,13 @@ function fillRemainingData(data) {
 
     if(data.courtName1) setAndTrigger('courtName1', data.courtName1);
     if(data.caseNo1) setAndTrigger('caseNo1', data.caseNo1);
-    // [수정됨] rulingDate1 -> date1 (ID 불일치 수정)
-    if(data.rulingDate1) setAndTrigger('date1', data.rulingDate1);
+    if(data.rulingDate1) setAndTrigger('date1', data.rulingDate1); // ID 매핑 수정 (date1)
     if(data.soga1) setAndTrigger('soga1', data.soga1);
     if(data.startFee1) setAndTrigger('startFee1', data.startFee1);
     if(data.successFee1) setAndTrigger('successFee1', data.successFee1);
 
     if(data.courtName2) setAndTrigger('courtName2', data.courtName2);
     if(data.caseNo2) setAndTrigger('caseNo2', data.caseNo2);
-    // [수정됨] rulingDate2 -> date2
     if(data.rulingDate2) setAndTrigger('date2', data.rulingDate2);
     if(data.soga2) setAndTrigger('soga2', data.soga2);
     if(data.startFee2) setAndTrigger('startFee2', data.startFee2);
@@ -381,7 +401,6 @@ function fillRemainingData(data) {
     else if(data.caseNo3) setAndTrigger('courtName3', '대법원'); 
     
     if(data.caseNo3) setAndTrigger('caseNo3', data.caseNo3);
-    // [수정됨] rulingDate3 -> date3
     if(data.rulingDate3) setAndTrigger('date3', data.rulingDate3);
     if(data.startFee3) setAndTrigger('startFee3', data.startFee3);
     if(data.successFee3) setAndTrigger('successFee3', data.successFee3);
@@ -409,7 +428,7 @@ function showManualInput() {
     section.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
-// 이벤트 리스너들
+// 이벤트 리스너들 (기존과 동일)
 const appName = document.getElementById('applicantName');
 const appAddr = document.getElementById('applicantAddr');
 const step2Area = document.getElementById('step2-area');
