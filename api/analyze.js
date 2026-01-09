@@ -1,10 +1,10 @@
 /* ==========================================
    api/analyze.js
-   - [FINAL FIX] 사용 가능한 모델(gemini-2.0-flash)로 변경
+   - [FINAL FIX] 사용 가능한 모델(gemini-2.0-flash)로 확정 적용
    ========================================== */
 
 export default async function handler(req, res) {
-    // 1. CORS 설정
+    // 1. CORS 설정 (접속 허용)
     res.setHeader('Access-Control-Allow-Credentials', true);
     res.setHeader('Access-Control-Allow-Origin', '*'); 
     res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
@@ -22,8 +22,7 @@ export default async function handler(req, res) {
     try {
         const { parts } = req.body;
 
-        // [핵심 변경] 진단 결과에서 확인된 '사용 가능한 모델'로 교체
-        // models/gemini-2.0-flash (최신 고성능 모델)
+        // [핵심] 진단 결과에서 확인된 '사용 가능한 모델'로 고정
         const targetModel = 'models/gemini-2.0-flash';
         const url = `https://generativelanguage.googleapis.com/v1beta/${targetModel}:generateContent?key=${GEMINI_API_KEY}`;
         
@@ -33,36 +32,19 @@ export default async function handler(req, res) {
             body: JSON.stringify({ contents: [{ parts: parts }] })
         });
 
-        // 404가 또 뜰 경우를 대비한 안전장치 (그대로 유지)
-        if (response.status === 404) {
-            console.log("Model not found (404). Fetching available models list...");
-            const listUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${GEMINI_API_KEY}`;
-            const listResp = await fetch(listUrl);
-            let availableModels = "조회 실패";
-            if (listResp.ok) {
-                const listData = await listResp.json();
-                if (listData.models) {
-                    availableModels = listData.models.map(m => m.name).filter(n => n.includes('gemini')).join('\n');
-                }
-            }
-            return res.status(200).json({
-                candidates: [{
-                    content: { parts: [{ text: `
-\`\`\`json
-{
-  "error_diagnosis": true,
-  "message": "⚠️ 설정한 모델(${targetModel})도 사용할 수 없습니다.",
-  "available_models": "${availableModels.replace(/\n/g, ', ')}",
-  "advice": "위 목록 중 다른 모델을 시도해보세요."
-}
-\`\`\`
-` }] }
-                }]
-            });
-        }
-
         if (!response.ok) {
             const errorData = await response.json().catch(() => ({}));
+            
+            // 에러 메시지 분석
+            const errorMessage = (errorData.error && errorData.error.message) ? errorData.error.message.toLowerCase() : "";
+            
+            // 429 Too Many Requests (할당량 초과) 상세 처리
+            if (response.status === 429) {
+                return res.status(429).json({ 
+                    error: "잠시만요! 1분 동안 너무 많은 요청이 있었습니다. 1분 뒤에 다시 시도해주세요." 
+                });
+            }
+
             return res.status(response.status).json(errorData);
         }
 
