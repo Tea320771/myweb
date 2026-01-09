@@ -1,7 +1,8 @@
 /* ==========================================
    1_intro_analysis.js
-   - [UPDATE] 프롬프트 강화: 소송비용 부담 비율(Fraction/%) 추출 추가
-   - [MAINTAIN] 기존 기능(심급/비용 추론, 이체내역, 주소 등) 유지
+   - [UPDATE] 다수 당사자(총 인원수) 카운팅 로직 추가
+   - [UPDATE] 복잡한 소송비용 부담 비율(각자 부담 등) 추론 강화
+   - [MAINTAIN] 기존 기능 유지
    ========================================== */
 
 // --- 1. 기본 보안 및 초기화 설정 ---
@@ -145,36 +146,41 @@ async function startAnalysis() {
     try {
         let parts = [];
         
-        // [프롬프트 강화] 비용 부담 비율 추출 지침 추가
+        // [프롬프트 강화] 당사자 수 계산 및 비율 추론 로직 보강
         const systemPrompt = `
         너는 유능한 법률 사무원이야. 제공된 법률 문서 이미지(판결문, 이체내역 등)를 분석해서 소송비용확정신청에 필요한 정보를 JSON 포맷으로 추출해줘.
 
         [분석 지침]
-        1. **심급 추론**: 파일명에 '1심', '2심', '3심' 등이 있으면 해당 심급으로 처리해라. 불분명하면 'ambiguousAmounts'에 담아라.
+        1. **심급 추론**: 파일명에 '1심', '2심' 등이 있으면 해당 심급으로 처리해라. 불분명하면 'ambiguousAmounts'에 담아라.
            
         2. **당사자 이름과 주소**: 판결문의 원고, 피고 이름과 **주소**를 정확히 찾아라. 주소는 필수다.
         
-        3. **판결선고일**: 각 심급 판결문의 '판결선고' 날짜를 찾아라.
+        3. **총 당사자 수 계산 (중요)**:
+           - 판결문 당사자(원고, 피고) 목록에서 **사람 수**를 정확히 세어라.
+           - "1. 김갑동, 2. 이을녀" 처럼 번호가 매겨져 있으면 모두 각각 세어라.
+           - 예: 원고 2명 + 피고 3명 = 총 5명. 이 값을 'totalPartyCount'에 정수(Integer)로 담아라.
+
+        4. **판결선고일**: 각 심급 판결문의 '판결선고' 날짜를 찾아라.
         
-        4. **소가**: 
+        5. **소가**: 
            - 1심: [청구취지] 금액. 예비적 청구가 있다면 가장 큰 금액.
            - 2심: [청구취지 및 항소취지] 금액.
            - 금액은 숫자만 추출.
 
-        5. **법원명 표준화**: '제xx민사부' 등 재판부 정보는 제거하고 공식 법원명만 남겨라.
+        6. **법원명 표준화**: '제xx민사부' 등 재판부 정보는 제거하고 공식 법원명만 남겨라.
 
-        6. **소송비용 부담 비율 (중요)**:
+        7. **소송비용 부담 비율 (중요)**:
            - 주문(主文)에서 소송비용 부담 비율을 찾아라.
-           - 만약 "소송비용은 피고가 부담한다"라면 비율은 '100'이다.
-           - 만약 "소송비용 중 1/3은 원고가, 나머지는 피고가 부담한다"라고 되어있고, 신청인이 '원고'라면 원고가 받을 돈은 없거나 적으므로 비율을 잘 판단해야 한다. 하지만 여기서는 **상대방(패소자)이 부담해야 할 비율**을 추출해라. 
-           - 예: 원고 승소(피고 전부 부담) -> burdenRatio: "100"
-           - 예: 원고 일부 승소(피고 2/3 부담) -> burdenRatio: "2/3"
-           - 각 심급별로 'burdenRatio1', 'burdenRatio2', 'burdenRatio3'에 문자열로 담아라. (기본값 '100')
+           - "소송비용은 피고들이 부담한다" -> '100'
+           - "원고 김갑동과 피고 사이 비용 중 1/4은 원고가, 나머지는 피고가 부담한다" -> 피고 부담 비율은 '3/4'.
+           - "나머지 피고들에 대한 비용은 원고들이 각자 부담한다" -> 패소자가 비용을 부담하지 않거나(0), 서로 각자 내라는 의미일 수 있다. 하지만 만약 신청인이 승소자 입장에서 받는 비율을 따져야 한다면, '1/2' 또는 '1/N' 등으로 추론될 수 있다.
+           - 주문 내용을 종합하여, **패소자(비용을 물어줘야 할 사람)가 부담해야 할 비율**을 문자열로 추출해라. (예: "100", "2/3", "3/4", "50" 등)
 
         [JSON 구조]
         {
           "plaintiffName": "...", "plaintiffAddr": "...",
           "defendantName": "...", "defendantAddr": "...",
+          "totalPartyCount": 2, 
           "winnerSide": "...",
           "courtName1": "...", "caseNo1": "...", "rulingDate1": "...", "startFee1": "...", "successFee1": "...", "soga1": "...", "burdenRatio1": "100",
           "courtName2": "...", "caseNo2": "...", "rulingDate2": "...", "startFee2": "...", "successFee2": "...", "burdenRatio2": "100",
@@ -387,7 +393,6 @@ function fillRemainingData(data) {
     if(data.soga1) setAndTrigger('soga1', data.soga1);
     if(data.startFee1) setAndTrigger('startFee1', data.startFee1);
     if(data.successFee1) setAndTrigger('successFee1', data.successFee1);
-    // [NEW] 비율 입력
     if(data.burdenRatio1) setAndTrigger('ratio1', data.burdenRatio1);
 
     if(data.courtName2) setAndTrigger('courtName2', data.courtName2);
@@ -396,7 +401,6 @@ function fillRemainingData(data) {
     if(data.soga2) setAndTrigger('soga2', data.soga2);
     if(data.startFee2) setAndTrigger('startFee2', data.startFee2);
     if(data.successFee2) setAndTrigger('successFee2', data.successFee2);
-    // [NEW] 비율 입력
     if(data.burdenRatio2) setAndTrigger('ratio2', data.burdenRatio2);
 
     if(data.courtName3) setAndTrigger('courtName3', data.courtName3);
@@ -406,8 +410,12 @@ function fillRemainingData(data) {
     if(data.rulingDate3) setAndTrigger('date3', data.rulingDate3);
     if(data.startFee3) setAndTrigger('startFee3', data.startFee3);
     if(data.successFee3) setAndTrigger('successFee3', data.successFee3);
-    // [NEW] 비율 입력
     if(data.burdenRatio3) setAndTrigger('ratio3', data.burdenRatio3);
+
+    // [NEW] 총 당사자 수(partyCount) 자동 입력
+    if (data.totalPartyCount && data.totalPartyCount > 0) {
+        setAndTrigger('partyCount', data.totalPartyCount);
+    }
 }
 
 function setAndTrigger(id, value) {
@@ -417,7 +425,7 @@ function setAndTrigger(id, value) {
         el.classList.add('ai-filled'); 
         el.dispatchEvent(new Event('input', { bubbles: true }));
         el.dispatchEvent(new Event('change', { bubbles: true }));
-        if (id.includes('Fee') || id.includes('soga') || id.includes('ratio')) {
+        if (id.includes('Fee') || id.includes('soga') || id.includes('ratio') || id === 'partyCount') {
              el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
         }
     }
