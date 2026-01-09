@@ -1,17 +1,14 @@
 /* ==========================================
    api/analyze.js
-   - [FINAL FIX] 무료로 사용 가능한 실험용 모델(gemini-2.0-flash-exp) 적용
+   - [FINAL FIX] 무료 계정에서 확실히 지원하는 'gemini-1.5-flash' 적용
+   - 2.0/2.5 버전은 무료 계정(Free Tier)에서 limit: 0 으로 막혀있음 확인됨
    ========================================== */
 
 export default async function handler(req, res) {
-    // 1. CORS 설정 (접속 허용)
     res.setHeader('Access-Control-Allow-Credentials', true);
     res.setHeader('Access-Control-Allow-Origin', '*'); 
     res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
-    res.setHeader(
-        'Access-Control-Allow-Headers',
-        'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
-    );
+    res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version');
 
     if (req.method === 'OPTIONS') { res.status(200).end(); return; }
     if (req.method !== 'POST') { return res.status(405).json({ error: 'Method not allowed' }); }
@@ -22,8 +19,10 @@ export default async function handler(req, res) {
     try {
         const { parts } = req.body;
 
-        // [핵심 변경] 'limit: 0' 에러가 뜨는 정식 버전 대신, 무료로 열려있는 '실험용(exp) 버전' 사용
-        const targetModel = 'models/gemini-2.0-flash-exp';
+        // [핵심] 무료 계정(Free Tier)의 유일한 희망: 1.5 Flash
+        // 2.0, 2.5, exp 등은 무료 계정에서 limit: 0 (사용 불가) 상태임이 확인되었습니다.
+        const targetModel = 'models/gemini-1.5-flash';
+        
         const url = `https://generativelanguage.googleapis.com/v1beta/${targetModel}:generateContent?key=${GEMINI_API_KEY}`;
         
         const response = await fetch(url, {
@@ -36,13 +35,12 @@ export default async function handler(req, res) {
             const errorData = await response.json().catch(() => ({}));
             console.error("Gemini API Error:", errorData);
             
-            // 에러 메시지 원본 전달
             const specificMessage = errorData.error?.message || JSON.stringify(errorData);
             
-            // 429 Too Many Requests 처리
+            // 429 에러 처리 (이제 limit:0 은 안 뜰 겁니다)
             if (response.status === 429) {
                  return res.status(429).json({ 
-                    error: `[할당량 초과] ${specificMessage}` 
+                    error: `[할당량 초과] 1분 뒤에 다시 시도해주세요. (${specificMessage})` 
                 });
             }
 
