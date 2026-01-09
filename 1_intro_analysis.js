@@ -3,7 +3,7 @@
    - 기본 설정, 네비게이션, 파일 업로드
    - [UPDATE] 판결문/계약서 구분 및 사건번호 우선순위 적용
    - [UPDATE] 이체내역(송금) 금액 추출 및 사용자 확인 로직
-   - [UPDATE] 판결문 당사자/주소 정밀 추출 및 '주문' 분석을 통한 승패소(비용부담) 판단
+   - [UPDATE] 판결문 당사자(이름/주소) 및 판결선고일 정밀 추출 로직 강화
    ========================================== */
 
 // ✅ 사용자가 제공한 OCR.space API 키 적용
@@ -228,17 +228,17 @@ async function startAnalysis() {
     }
 }
 
-// --- [핵심] 5. 데이터 추출 알고리즘 (판결문 주소/당사자 정밀 파악 + 비용부담자 파악) ---
+// --- [핵심] 5. 데이터 추출 알고리즘 (판결문 주소/당사자/선고일 정밀 파악) ---
 function analyzeLegalDocuments(categorizedText) {
     const result = {
-        courtName1: null, caseNo1: null,
-        courtName2: null, caseNo2: null,
-        courtName3: null, caseNo3: null,
+        courtName1: null, caseNo1: null, rulingDate1: null,
+        courtName2: null, caseNo2: null, rulingDate2: null,
+        courtName3: null, caseNo3: null, rulingDate3: null,
         plaintiffName: null, defendantName: null, 
-        plaintiffAddr: null, defendantAddr: null, // [NEW] 판결문에서 추출한 주소
+        plaintiffAddr: null, defendantAddr: null,
         contractClientName: null, contractOpponentName: null,
         clientAddress: null,
-        winnerSide: null, // [NEW] 승소측 (비용 확정 신청 권리자)
+        winnerSide: null,
         soga1: null, soga2: null, soga3: null,
         startFee1: null, successFee1: null,
         startFee2: null, successFee2: null,
@@ -246,46 +246,12 @@ function analyzeLegalDocuments(categorizedText) {
         ambiguousAmounts: [] 
     };
 
-    const allJudText = categorizedText[1].jud + categorizedText[2].jud + categorizedText[3].jud;
     const allText = categorizedText.common 
         + categorizedText[1].jud + categorizedText[1].etc 
         + categorizedText[2].jud + categorizedText[2].etc 
         + categorizedText[3].jud + categorizedText[3].etc;
 
-    // 1-1. 판결문 기반 당사자(이름 + 주소) 정밀 추출 [NEW Logic]
-    // 패턴: (원고|피고|...) [이름] [주소] 형식으로 이어지는 경우 포착
-    function extractPartyFromJudgment(text) {
-        // 이름 뒤에 시/도/구/군 등으로 시작하는 주소가 오는지 확인
-        // 예: "원고 홍길동 서울 서초구..."
-        const pNameRegex = /(?:원\s*고|항\s*소\s*인|상\s*고\s*인|신\s*청\s*인)(?:[^가-힣]*)([가-힣]{2,5})\s+(?:주\s*소\s*[:;]?)?\s*([가-힣]{1,5}(?:시|도|구|군)[^0-9\n]*(?:로|길|동)[^0-9\n]*[0-9]+(?:-[0-9]+)?)/;
-        const dNameRegex = /(?:피\s*고|피\s*항\s*소\s*인|피\s*상\s*고\s*인|피\s*신\s*청\s*인)(?:[^가-힣]*)([가-힣]{2,5})\s+(?:주\s*소\s*[:;]?)?\s*([가-힣]{1,5}(?:시|도|구|군)[^0-9\n]*(?:로|길|동)[^0-9\n]*[0-9]+(?:-[0-9]+)?)/;
-
-        const pMatch = text.match(pNameRegex);
-        if (pMatch) {
-            result.plaintiffName = pMatch[1];
-            result.plaintiffAddr = pMatch[2];
-        }
-        const dMatch = text.match(dNameRegex);
-        if (dMatch) {
-            result.defendantName = dMatch[1];
-            result.defendantAddr = dMatch[2];
-        }
-    }
-    // 가장 상급심 판결문부터, 혹은 전체 판결문 텍스트에서 검색
-    extractPartyFromJudgment(allJudText);
-
-    // 1-2. 계약서 기반 당사자 추출 (기존 로직 유지 - 백업용)
-    const clientPatterns = [/위\s*임\s*인\s*\(?갑\)?\s*[:;]?\s*([가-힣]{2,5})(?!\s*변호사)/, /당\s*사\s*자\s*[:;]?\s*([가-힣]{2,5})/];
-    result.contractClientName = findBestMatch(allText, clientPatterns);
-    
-    // 2. 주소 추출 (기존 일반 검색 + 판결문 주소 우선 적용)
-    if (!result.clientAddress) {
-        const addrRegex = /주\s*소\s*[:;]?\s*([가-힣0-9\s,\-\(\)로길층호]+(?:시|도|구|군|동|면|읍)\s*[가-힣0-9\s,\-\(\)로길층호]*)(?=\s주\s*민|\s전\s*화)/;
-        const addrMatch = allText.match(addrRegex);
-        if (addrMatch) result.clientAddress = addrMatch[1].trim();
-    }
-
-    // 3. 심급별 상세 정보 추출
+    // 1. 심급별 상세 정보 추출
     function extractFromText(text, level, isJudgmentSource) {
         if (!text) return;
 
@@ -314,29 +280,64 @@ function analyzeLegalDocuments(categorizedText) {
                 }
             }
         }
-        
-        // (3) 비용 부담(주문) 분석 [NEW Logic]
-        // 판결문(jud)인 경우에만 실행
-        if (isJudgmentSource) {
-            // "주문" ~ "이유" 사이 텍스트 추출 (없으면 전체에서 검색)
-            let orderText = text;
-            const startIdx = text.indexOf("주 문");
-            const endIdx = text.indexOf("이 유");
-            if (startIdx !== -1 && endIdx !== -1) {
-                orderText = text.substring(startIdx, endIdx);
-            } else if (startIdx !== -1) {
-                orderText = text.substring(startIdx);
-            }
 
-            // 원고 부담 -> 피고가 신청인 / 피고 부담 -> 원고가 신청인
-            if (orderText.includes("소송비용은 원고가 부담") || orderText.includes("항소비용은 원고가 부담") || orderText.includes("상고비용은 원고가 부담")) {
-                result.winnerSide = "defendant"; // 피고가 이김 -> 피고가 신청
-            } else if (orderText.includes("소송비용은 피고가 부담") || orderText.includes("항소비용은 피고가 부담") || orderText.includes("상고비용은 피고가 부담")) {
-                result.winnerSide = "plaintiff"; // 원고가 이김 -> 원고가 신청
+        // (3) [NEW] 판결선고일 추출
+        if (isJudgmentSource) {
+             const dateRegex = /(?:판결)?선\s*고\s*(20\d{2}\.\s*\d{1,2}\.\s*\d{1,2}\.?)/;
+             const dateMatch = text.match(dateRegex);
+             if (dateMatch) {
+                 result['rulingDate' + level] = dateMatch[1];
+             }
+        }
+        
+        // (4) [NEW] 당사자(이름, 주소) 정밀 추출 (판결문 헤더 블록 분석)
+        if (isJudgmentSource) {
+            // 원고/피고 구역을 나누어 분석
+            const pStart = text.search(/원\s*고|항\s*소\s*인|상\s*고\s*인|신\s*청\s*인/);
+            const dStart = text.search(/피\s*고|피\s*항\s*소\s*인|피\s*상\s*고\s*인|피\s*신\s*청\s*인/);
+            const endLimit = text.search(/주\s*문|청\s*구\s*취\s*지|변\s*론\s*종\s*결/);
+            
+            // 이름 추출용 정규식 (2~5글자 한글)
+            const nameRegex = /([가-힣]{2,5})(?!\s*변호사|\s*법무법인)/;
+            // 주소 추출용 정규식 (시/도/군/구 + 로/길/동/리 + 숫자)
+            const addrRegex = /([가-힣]{1,5}(?:시|도)\s+(?:[가-힣]{1,5}(?:시|군|구)\s+)?[가-힣0-9\s]+(?:로|길|동|읍|면)[^0-9\n]*\d+(?:-\d+)?)/;
+
+            if (pStart !== -1 && dStart !== -1 && dStart > pStart) {
+                // 원고 블록 (원고 시작 ~ 피고 시작 전)
+                const pBlock = text.substring(pStart, dStart);
+                const pNameMatch = pBlock.replace(/원\s*고|항\s*소\s*인|상\s*고\s*인/g, "").match(nameRegex);
+                const pAddrMatch = pBlock.match(addrRegex);
+                
+                if (pNameMatch && !result.plaintiffName) result.plaintiffName = pNameMatch[1];
+                if (pAddrMatch && !result.plaintiffAddr) result.plaintiffAddr = pAddrMatch[1];
+
+                // 피고 블록 (피고 시작 ~ 주문 등 끝부분 전)
+                const endPoint = (endLimit !== -1) ? endLimit : text.length;
+                const dBlock = text.substring(dStart, endPoint);
+                const dNameMatch = dBlock.replace(/피\s*고|피\s*항\s*소\s*인|피\s*상\s*고\s*인/g, "").match(nameRegex);
+                const dAddrMatch = dBlock.match(addrRegex);
+
+                if (dNameMatch && !result.defendantName) result.defendantName = dNameMatch[1];
+                if (dAddrMatch && !result.defendantAddr) result.defendantAddr = dAddrMatch[1];
             }
         }
 
-        // (4) 착수금/성공보수/소가 (기존 로직)
+        // (5) 비용 부담(주문) 분석 (기존 유지)
+        if (isJudgmentSource) {
+            let orderText = text;
+            const startIdx = text.indexOf("주 문");
+            const endIdx = text.indexOf("이 유");
+            if (startIdx !== -1 && endIdx !== -1) orderText = text.substring(startIdx, endIdx);
+            else if (startIdx !== -1) orderText = text.substring(startIdx);
+
+            if (orderText.includes("소송비용은 원고가 부담") || orderText.includes("항소비용은 원고가 부담") || orderText.includes("상고비용은 원고가 부담")) {
+                result.winnerSide = "defendant"; 
+            } else if (orderText.includes("소송비용은 피고가 부담") || orderText.includes("항소비용은 피고가 부담") || orderText.includes("상고비용은 피고가 부담")) {
+                result.winnerSide = "plaintiff"; 
+            }
+        }
+
+        // (6) 금전 정보 (기존 유지)
         const feeRegexStart = /(?:착\s*수\s*금|착\s*수\s*보\s*수)[^0-9]*?금\s*([0-9,]+)\s*원/;
         const startMatch = text.match(feeRegexStart);
         if (startMatch && !result['startFee' + level]) result['startFee' + level] = startMatch[1];
@@ -354,22 +355,29 @@ function analyzeLegalDocuments(categorizedText) {
         extractFromText(categorizedText[level].etc, level, false);
     });
     
-    // Fallback
+    // Fallback: 계약서 기반 주소/이름 (판결문에서 못 찾았을 경우)
+    if (!result.clientAddress && !result.plaintiffAddr && !result.defendantAddr) {
+        const addrRegex = /주\s*소\s*[:;]?\s*([가-힣0-9\s,\-\(\)로길층호]+(?:시|도|구|군|동|면|읍)\s*[가-힣0-9\s,\-\(\)로길층호]*)(?=\s주\s*민|\s전\s*화)/;
+        const addrMatch = allText.match(addrRegex);
+        if (addrMatch) result.clientAddress = addrMatch[1].trim();
+    }
+    const clientPatterns = [/위\s*임\s*인\s*\(?갑\)?\s*[:;]?\s*([가-힣]{2,5})(?!\s*변호사)/, /당\s*사\s*자\s*[:;]?\s*([가-힣]{2,5})/];
+    result.contractClientName = findBestMatch(allText, clientPatterns);
+    
+    // Fallback: 법원 정보
     if (!result.courtName1 && !result.courtName2 && !result.courtName3) {
         extractFromText(categorizedText.common, 1, false);
         if(result.courtName1 && result.courtName1.includes("대법원")) { 
             result.courtName3 = result.courtName1; result.courtName1 = null; 
             if(result.caseNo1) { result.caseNo3 = result.caseNo1; result.caseNo1 = null; }
-            if(result.startFee1) { result.startFee3 = result.startFee1; result.startFee1 = null; }
         }
         else if(result.courtName1 && result.courtName1.includes("고등")) {
              result.courtName2 = result.courtName1; result.courtName1 = null;
              if(result.caseNo1) { result.caseNo2 = result.caseNo1; result.caseNo1 = null; }
-             if(result.startFee1) { result.startFee2 = result.startFee1; result.startFee1 = null; }
         }
     }
 
-    // 4. 이체내역(송금) 정밀 분석 (기존 유지)
+    // 이체내역(송금) 정밀 분석 (기존 유지)
     function scanForTransfers(text, level) {
         const transferRegex = /(?:출금|이체|송금|법무법인)[^0-9\-\n]*?[\-\s]([0-9,]{3,})(?:원|\s|$)/g;
         const simpleMinusRegex = /[\-]\s*([0-9,]{3,})\s*원/g;
@@ -409,33 +417,18 @@ function findBestMatch(text, patternArray) {
     return null;
 }
 
-// --- 6. 신청인 확인 및 데이터 주입 (판결문 기반 자동 선택 로직 추가) ---
+// --- 6. 신청인 확인 및 데이터 주입 ---
 function confirmApplicantProcess(data) {
-    processAmbiguousFees(data); // 이체내역 확인
+    processAmbiguousFees(data); 
 
-    // [NEW] 판결문에서 파악된 원/피고 이름 및 승소 여부 반영
     let extractedPlaintiff = data.plaintiffName || data.contractClientName || "원고(미확인)";
     let extractedDefendant = data.defendantName || data.contractOpponentName || "피고(미확인)";
     
-    // 모달에 이름 표시
     document.getElementById('modal-plaintiff-name').innerText = extractedPlaintiff; 
     document.getElementById('modal-defendant-name').innerText = extractedDefendant;
-    
-    // [NEW] 승소측(비용신청권자)이 파악되었다면 자동 선택 유도 (혹은 모달 순서 배치)
-    // 여기서는 사용자가 모달에서 클릭해야 하므로, 안내 메시지를 띄우거나 콘솔 로그 등으로 확인 가능
-    // 만약 data.winnerSide가 있으면, 해당 쪽을 신청인으로 간주하고 처리할 수도 있으나
-    // 사용자가 명시적으로 선택하게 하는 기존 UX를 유지하되, 이름이 정확히 매핑되도록 함.
-    
     document.getElementById('applicant-selection-modal').classList.remove('hidden');
-    
-    // (선택적) 만약 승소측이 확실하면 알림을 줄 수도 있음
-    if (data.winnerSide) {
-        const winnerName = (data.winnerSide === 'plaintiff') ? extractedPlaintiff : extractedDefendant;
-        console.log(`판결문 분석 결과, 소송비용 신청 권리자는 ${winnerName} (${data.winnerSide})로 추정됩니다.`);
-    }
 }
 
-// [NEW] 미분류 이체내역 처리 함수 (기존 동일)
 function processAmbiguousFees(data) {
     if (!data.ambiguousAmounts || data.ambiguousAmounts.length === 0) return;
     let handledAmounts = [];
@@ -472,35 +465,27 @@ function selectApplicant(selectionSide) {
     document.getElementById('applicant-selection-modal').classList.add('hidden'); 
 
     const data = aiExtractedData;
-    // 모달에 표시된 이름 가져오기
     const leftName = document.getElementById('modal-plaintiff-name').innerText;
     const rightName = document.getElementById('modal-defendant-name').innerText;
 
     let finalAppName = "", finalRespName = "";
-    // 사용자가 '왼쪽(원고측)'을 선택했는지 '오른쪽(피고측)'을 선택했는지에 따라 할당
     if (selectionSide === 'plaintiff') { 
         finalAppName = leftName; finalRespName = rightName;
     } else { 
         finalAppName = rightName; finalRespName = leftName;
     }
 
-    // 이름 입력
     if(finalAppName && !finalAppName.includes("미확인")) setAndTrigger('applicantName', finalAppName);
     
-    // [NEW] 주소 입력 로직 강화
-    // 사용자가 선택한 쪽(신청인)이 원고인지 피고인지 판단하여 판결문에서 추출한 주소 할당
+    // 주소 입력 우선순위 (판결문 주소 -> 계약서 주소)
     if (selectionSide === 'plaintiff') {
-        // 신청인이 원고인 경우
         if (data.plaintiffAddr) setAndTrigger('applicantAddr', data.plaintiffAddr);
         else if (data.clientAddress) setAndTrigger('applicantAddr', data.clientAddress);
     } else {
-        // 신청인이 피고인 경우
         if (data.defendantAddr) setAndTrigger('applicantAddr', data.defendantAddr);
-        // 피고 주소가 판결문에 없으면 계약서 주소라도 시도 (보통 계약서엔 갑 주소만 있지만)
         else if (data.clientAddress && finalAppName === data.contractClientName) setAndTrigger('applicantAddr', data.clientAddress);
     }
 
-    // 피신청인 입력
     if(finalRespName && !finalRespName.includes("미확인")) {
         document.getElementById('step3-area').classList.remove('hidden');
         document.getElementById('btnToCaseInfo').classList.remove('hidden');
@@ -522,12 +507,14 @@ function fillRemainingData(data) {
 
     if(data.courtName1) setAndTrigger('courtName1', data.courtName1);
     if(data.caseNo1) setAndTrigger('caseNo1', data.caseNo1);
+    if(data.rulingDate1) setAndTrigger('rulingDate1', data.rulingDate1); // [NEW] 선고일 입력
     if(data.soga1) setAndTrigger('soga1', data.soga1);
     if(data.startFee1) setAndTrigger('startFee1', data.startFee1);
     if(data.successFee1) setAndTrigger('successFee1', data.successFee1);
 
     if(data.courtName2) setAndTrigger('courtName2', data.courtName2);
     if(data.caseNo2) setAndTrigger('caseNo2', data.caseNo2);
+    if(data.rulingDate2) setAndTrigger('rulingDate2', data.rulingDate2); // [NEW] 선고일 입력
     if(data.soga2) setAndTrigger('soga2', data.soga2);
     if(data.startFee2) setAndTrigger('startFee2', data.startFee2);
     if(data.successFee2) setAndTrigger('successFee2', data.successFee2);
@@ -536,6 +523,7 @@ function fillRemainingData(data) {
     else if(data.caseNo3) setAndTrigger('courtName3', '대법원'); 
     
     if(data.caseNo3) setAndTrigger('caseNo3', data.caseNo3);
+    if(data.rulingDate3) setAndTrigger('rulingDate3', data.rulingDate3); // [NEW] 선고일 입력
     if(data.startFee3) setAndTrigger('startFee3', data.startFee3);
     if(data.successFee3) setAndTrigger('successFee3', data.successFee3);
 }
