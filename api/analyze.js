@@ -1,10 +1,11 @@
 /* ==========================================
    api/analyze.js
-   - [FINAL FIX] 사용 가능한 모델(gemini-2.0-flash)로 확정 적용
+   - [DEBUG MODE] 에러 메시지 원본 출력
+   - "1분 대기" 추측 로직을 제거하고 구글의 실제 응답을 보여줍니다.
    ========================================== */
 
 export default async function handler(req, res) {
-    // 1. CORS 설정 (접속 허용)
+    // 1. CORS 설정
     res.setHeader('Access-Control-Allow-Credentials', true);
     res.setHeader('Access-Control-Allow-Origin', '*'); 
     res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
@@ -22,7 +23,7 @@ export default async function handler(req, res) {
     try {
         const { parts } = req.body;
 
-        // [핵심] 진단 결과에서 확인된 '사용 가능한 모델'로 고정
+        // 모델: gemini-2.0-flash
         const targetModel = 'models/gemini-2.0-flash';
         const url = `https://generativelanguage.googleapis.com/v1beta/${targetModel}:generateContent?key=${GEMINI_API_KEY}`;
         
@@ -34,18 +35,13 @@ export default async function handler(req, res) {
 
         if (!response.ok) {
             const errorData = await response.json().catch(() => ({}));
+            console.error("Gemini API Error:", errorData);
             
-            // 에러 메시지 분석
-            const errorMessage = (errorData.error && errorData.error.message) ? errorData.error.message.toLowerCase() : "";
-            
-            // 429 Too Many Requests (할당량 초과) 상세 처리
-            if (response.status === 429) {
-                return res.status(429).json({ 
-                    error: "잠시만요! 1분 동안 너무 많은 요청이 있었습니다. 1분 뒤에 다시 시도해주세요." 
-                });
-            }
-
-            return res.status(response.status).json(errorData);
+            // [수정됨] 내 맘대로 에러를 해석하지 않고, 구글의 원본 메시지를 그대로 보냄
+            // 이렇게 해야 'Daily Limit'인지 'Rate Limit'인지 정확히 알 수 있음
+            return res.status(response.status).json({
+                error: `[구글 서버 응답] ${errorData.error?.message || response.statusText}`
+            });
         }
 
         const data = await response.json();
