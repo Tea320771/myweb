@@ -1,7 +1,8 @@
 /* ==========================================
    1_intro_analysis.js
    - 기본 설정, 네비게이션, 파일 업로드
-   - [UPDATE] OCR.space 제거 -> Google Gemini Vision API 직접 연동
+   - [UPDATE] Google Gemini Vision API 모델명 수정 (gemini-1.5-flash-001)
+   - [FIX] API 중복 호출 제거 및 할당량 에러 처리 강화
    ========================================== */
 
 // ✅ 사용자가 제공한 Google Gemini API Key 적용
@@ -203,38 +204,8 @@ async function startAnalysis() {
         logsContainer.innerHTML += `<div class="log-item log-info" style="font-weight:bold;">🤖 Google Gemini가 문서를 분석 중입니다...</div>`;
         logsContainer.scrollTop = logsContainer.scrollHeight;
 
-        // Gemini API 호출
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
-        
-        const response = await fetch(url, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ contents: [{ parts: parts }] })
-        });
-
-        const result = await response.json();
-        
-        if (result.error) {
-            throw new Error(result.error.message || "Gemini API 오류 발생");
-        }
-        
-        if (!result.candidates || result.candidates.length === 0) {
-            throw new Error("AI 분석 결과가 없습니다.");
-        }
-
-        // 결과 파싱
-        let rawText = result.candidates[0].content.parts[0].text;
-        // JSON 마크다운 제거
-        rawText = rawText.replace(/```json/g, "").replace(/```/g, "").trim();
-        
-        console.log("Gemini Raw Response:", rawText); // 디버깅용
-
-        try {
-            aiExtractedData = JSON.parse(rawText);
-        } catch (e) {
-            console.error("JSON Parsing Error:", e);
-            throw new Error("AI 응답을 처리하는 데 실패했습니다.");
-        }
+        // Gemini API 호출 (여기서만 호출하도록 중복 제거됨)
+        aiExtractedData = await callLLMForAnalysis(parts);
 
         logsContainer.innerHTML += `<div class="log-item log-success" style="font-weight:bold;">✨ AI 분석 완료! 결과 확인</div>`;
         setTimeout(() => { confirmApplicantProcess(aiExtractedData); }, 800);
@@ -242,18 +213,70 @@ async function startAnalysis() {
     } catch (error) {
         console.error(error);
         logsContainer.innerHTML += `<div class="log-item log-error">❌ 오류: ${error.message}</div>`;
-        alert("분석 중 오류가 발생했습니다.\n" + error.message);
+        alert(error.message); // 할당량 초과 메시지를 alert으로 띄움
         actionArea.classList.remove('hidden');
     }
 }
 
-// Helper: 파일을 Base64 문자열로 변환 (헤더 제거)
+// --- [UPDATE] API 호출 및 에러 핸들링 함수 ---
+async function callLLMForAnalysis(parts) {
+    // [중요] 모델명을 gemini-1.5-flash-001 로 변경하여 'not found' 에러 해결
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-001:generateContent?key=${GEMINI_API_KEY}`;
+    
+    const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contents: [{ parts: parts }] })
+    });
+
+    if (!response.ok) {
+        // 에러 응답 파싱
+        const errorData = await response.json().catch(() => ({}));
+        const errorMessage = (errorData.error && errorData.error.message) ? errorData.error.message.toLowerCase() : "";
+        const status = response.status;
+
+        // 429 Too Many Requests 처리
+        if (status === 429) {
+            // 하루 할당량(RPD) 초과 체크
+            if (errorMessage.includes("day") || errorMessage.includes("daily") || errorMessage.includes("quota") || errorMessage.includes("exhausted")) {
+                 if (errorMessage.includes("minute") || errorMessage.includes("rate")) {
+                     throw new Error("1분 후 다시 시도해주세요."); // 분당 할당량 초과
+                 } else {
+                     throw new Error("하루 할당량이 초과하였어요. 내일 다시 시도해주세요."); // 하루 할당량 초과
+                 }
+            } else {
+                // 기본 분당 초과로 간주
+                throw new Error("1분 후 다시 시도해주세요.");
+            }
+        }
+
+        throw new Error(`AI 서버 오류 (${status}): ${errorMessage || response.statusText}`);
+    }
+
+    const result = await response.json();
+    
+    if (!result.candidates || result.candidates.length === 0) {
+        throw new Error("AI 분석 결과가 비어있습니다.");
+    }
+
+    // 결과 파싱
+    let rawText = result.candidates[0].content.parts[0].text;
+    rawText = rawText.replace(/```json/g, "").replace(/```/g, "").trim();
+    
+    try {
+        return JSON.parse(rawText);
+    } catch (e) {
+        console.error("JSON Parsing Error:", e);
+        throw new Error("AI 응답을 처리하는 데 실패했습니다.");
+    }
+}
+
+// Helper: 파일을 Base64 문자열로 변환
 function fileToBase64(file) {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.readAsDataURL(file);
         reader.onload = () => {
-            // "data:image/png;base64,..." 형식을 "..." 부분만 추출
             const base64String = reader.result.split(',')[1];
             resolve(base64String);
         };
