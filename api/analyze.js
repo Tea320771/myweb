@@ -1,57 +1,31 @@
 /* ==========================================
-   api/analyze.js
-   - [UPDATE] 모델명을 정확한 정식 버전(gemini-1.5-flash-002)으로 수정
+   api/analyze.js (디버깅용 임시 코드)
+   - 내 키로 사용 가능한 모델 목록을 조회합니다.
    ========================================== */
 
 export default async function handler(req, res) {
-    // 1. CORS 헤더 설정 (모든 도메인 허용)
-    res.setHeader('Access-Control-Allow-Credentials', true);
-    res.setHeader('Access-Control-Allow-Origin', '*'); 
-    res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
-    res.setHeader(
-        'Access-Control-Allow-Headers',
-        'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
-    );
-
-    // 2. OPTIONS 요청 처리 (브라우저의 사전 검사)
-    if (req.method === 'OPTIONS') {
-        res.status(200).end();
-        return;
-    }
-
-    // 3. POST 요청만 허용
-    if (req.method !== 'POST') {
-        return res.status(405).json({ error: 'Method not allowed' });
-    }
-
     const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
-    if (!GEMINI_API_KEY) {
-        return res.status(500).json({ error: 'Server configuration error: API Key missing' });
-    }
-
     try {
-        const { parts } = req.body;
-
-        // [수정됨] 모델명을 'gemini-1.5-flash-002'로 변경 (가장 최신 안정화 버전)
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-002:generateContent?key=${GEMINI_API_KEY}`;
-        
-        const response = await fetch(url, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ contents: [{ parts: parts }] })
-        });
+        // 모델 목록 조회 (ListModels)
+        const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${GEMINI_API_KEY}`;
+        const response = await fetch(url);
+        const data = await response.json();
 
         if (!response.ok) {
-            const errorData = await response.json().catch(() => ({}));
-            return res.status(response.status).json(errorData);
+            return res.status(response.status).json({
+                error: "API Key 문제 발생",
+                details: data
+            });
         }
 
-        const data = await response.json();
-        return res.status(200).json(data);
+        // 성공 시 사용 가능한 모델 이름들만 뽑아서 보여줌
+        return res.status(200).json({
+            message: "API 키는 정상입니다! 아래 모델 중 하나를 코드에 써야 합니다.",
+            available_models: data.models.map(m => m.name) // 예: "models/gemini-1.5-flash"
+        });
 
     } catch (error) {
-        console.error("Server Error:", error);
         return res.status(500).json({ error: error.message });
     }
 }
