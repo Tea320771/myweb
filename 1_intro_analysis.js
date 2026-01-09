@@ -2,7 +2,8 @@
    1_intro_analysis.js
    - 기본 설정, 네비게이션, 파일 업로드
    - [UPDATE] 판결문/계약서 구분 및 사건번호 우선순위 적용
-   - [UPDATE] 이체내역(송금) 금액 추출 및 사용자 확인 로직 추가
+   - [UPDATE] 이체내역(송금) 금액 추출 및 사용자 확인 로직
+   - [UPDATE] 판결문 당사자/주소 정밀 추출 및 '주문' 분석을 통한 승패소(비용부담) 판단
    ========================================== */
 
 // ✅ 사용자가 제공한 OCR.space API 키 적용
@@ -227,45 +228,62 @@ async function startAnalysis() {
     }
 }
 
-// --- [핵심] 5. 데이터 추출 알고리즘 (판결문 우선 + 이체내역 분석 로직 추가) ---
+// --- [핵심] 5. 데이터 추출 알고리즘 (판결문 주소/당사자 정밀 파악 + 비용부담자 파악) ---
 function analyzeLegalDocuments(categorizedText) {
     const result = {
         courtName1: null, caseNo1: null,
         courtName2: null, caseNo2: null,
         courtName3: null, caseNo3: null,
         plaintiffName: null, defendantName: null, 
+        plaintiffAddr: null, defendantAddr: null, // [NEW] 판결문에서 추출한 주소
         contractClientName: null, contractOpponentName: null,
         clientAddress: null,
+        winnerSide: null, // [NEW] 승소측 (비용 확정 신청 권리자)
         soga1: null, soga2: null, soga3: null,
         startFee1: null, successFee1: null,
         startFee2: null, successFee2: null,
         startFee3: null, successFee3: null,
-        ambiguousAmounts: [] // 미분류 이체 내역 저장용
+        ambiguousAmounts: [] 
     };
 
+    const allJudText = categorizedText[1].jud + categorizedText[2].jud + categorizedText[3].jud;
     const allText = categorizedText.common 
         + categorizedText[1].jud + categorizedText[1].etc 
         + categorizedText[2].jud + categorizedText[2].etc 
         + categorizedText[3].jud + categorizedText[3].etc;
 
-    // 1. 당사자(원고/피고) 추출
-    const clientPatterns = [
-        /위\s*임\s*인\s*\(?갑\)?\s*[:;]?\s*([가-힣]{2,5})(?!\s*변호사)/,
-        /당\s*사\s*자\s*[:;]?\s*([가-힣]{2,5})/, 
-        /원\s*고\s*\(?신\s*청\s*인\)?\s*[:;]?\s*([가-힣]{2,5})/
-    ];
+    // 1-1. 판결문 기반 당사자(이름 + 주소) 정밀 추출 [NEW Logic]
+    // 패턴: (원고|피고|...) [이름] [주소] 형식으로 이어지는 경우 포착
+    function extractPartyFromJudgment(text) {
+        // 이름 뒤에 시/도/구/군 등으로 시작하는 주소가 오는지 확인
+        // 예: "원고 홍길동 서울 서초구..."
+        const pNameRegex = /(?:원\s*고|항\s*소\s*인|상\s*고\s*인|신\s*청\s*인)(?:[^가-힣]*)([가-힣]{2,5})\s+(?:주\s*소\s*[:;]?)?\s*([가-힣]{1,5}(?:시|도|구|군)[^0-9\n]*(?:로|길|동)[^0-9\n]*[0-9]+(?:-[0-9]+)?)/;
+        const dNameRegex = /(?:피\s*고|피\s*항\s*소\s*인|피\s*상\s*고\s*인|피\s*신\s*청\s*인)(?:[^가-힣]*)([가-힣]{2,5})\s+(?:주\s*소\s*[:;]?)?\s*([가-힣]{1,5}(?:시|도|구|군)[^0-9\n]*(?:로|길|동)[^0-9\n]*[0-9]+(?:-[0-9]+)?)/;
+
+        const pMatch = text.match(pNameRegex);
+        if (pMatch) {
+            result.plaintiffName = pMatch[1];
+            result.plaintiffAddr = pMatch[2];
+        }
+        const dMatch = text.match(dNameRegex);
+        if (dMatch) {
+            result.defendantName = dMatch[1];
+            result.defendantAddr = dMatch[2];
+        }
+    }
+    // 가장 상급심 판결문부터, 혹은 전체 판결문 텍스트에서 검색
+    extractPartyFromJudgment(allJudText);
+
+    // 1-2. 계약서 기반 당사자 추출 (기존 로직 유지 - 백업용)
+    const clientPatterns = [/위\s*임\s*인\s*\(?갑\)?\s*[:;]?\s*([가-힣]{2,5})(?!\s*변호사)/, /당\s*사\s*자\s*[:;]?\s*([가-힣]{2,5})/];
     result.contractClientName = findBestMatch(allText, clientPatterns);
-
-    const opponentPatterns = [
-        /상\s*대\s*방\s*[:;]?\s*([가-힣]{2,5})/, 
-        /피\s*고\s*\(?피\s*신\s*청\s*인\)?\s*[:;]?\s*([가-힣]{2,5})/
-    ];
-    result.contractOpponentName = findBestMatch(allText, opponentPatterns);
-
-    // 2. 주소 추출
-    const addrRegex = /주\s*소\s*[:;]?\s*([가-힣0-9\s,\-\(\)로길층호]+(?:시|도|구|군|동|면|읍)\s*[가-힣0-9\s,\-\(\)로길층호]*)(?=\s주\s*민|\s전\s*화)/;
-    const addrMatch = allText.match(addrRegex);
-    if (addrMatch) result.clientAddress = addrMatch[1].trim();
+    
+    // 2. 주소 추출 (기존 일반 검색 + 판결문 주소 우선 적용)
+    if (!result.clientAddress) {
+        const addrRegex = /주\s*소\s*[:;]?\s*([가-힣0-9\s,\-\(\)로길층호]+(?:시|도|구|군|동|면|읍)\s*[가-힣0-9\s,\-\(\)로길층호]*)(?=\s주\s*민|\s전\s*화)/;
+        const addrMatch = allText.match(addrRegex);
+        if (addrMatch) result.clientAddress = addrMatch[1].trim();
+    }
 
     // 3. 심급별 상세 정보 추출
     function extractFromText(text, level, isJudgmentSource) {
@@ -296,18 +314,37 @@ function analyzeLegalDocuments(categorizedText) {
                 }
             }
         }
+        
+        // (3) 비용 부담(주문) 분석 [NEW Logic]
+        // 판결문(jud)인 경우에만 실행
+        if (isJudgmentSource) {
+            // "주문" ~ "이유" 사이 텍스트 추출 (없으면 전체에서 검색)
+            let orderText = text;
+            const startIdx = text.indexOf("주 문");
+            const endIdx = text.indexOf("이 유");
+            if (startIdx !== -1 && endIdx !== -1) {
+                orderText = text.substring(startIdx, endIdx);
+            } else if (startIdx !== -1) {
+                orderText = text.substring(startIdx);
+            }
 
-        // (3) 착수금 (명시적 키워드)
+            // 원고 부담 -> 피고가 신청인 / 피고 부담 -> 원고가 신청인
+            if (orderText.includes("소송비용은 원고가 부담") || orderText.includes("항소비용은 원고가 부담") || orderText.includes("상고비용은 원고가 부담")) {
+                result.winnerSide = "defendant"; // 피고가 이김 -> 피고가 신청
+            } else if (orderText.includes("소송비용은 피고가 부담") || orderText.includes("항소비용은 피고가 부담") || orderText.includes("상고비용은 피고가 부담")) {
+                result.winnerSide = "plaintiff"; // 원고가 이김 -> 원고가 신청
+            }
+        }
+
+        // (4) 착수금/성공보수/소가 (기존 로직)
         const feeRegexStart = /(?:착\s*수\s*금|착\s*수\s*보\s*수)[^0-9]*?금\s*([0-9,]+)\s*원/;
         const startMatch = text.match(feeRegexStart);
         if (startMatch && !result['startFee' + level]) result['startFee' + level] = startMatch[1];
 
-        // (4) 성공보수 (명시적 키워드)
         const feeRegexSuccess = /(?:성\s*공\s*보\s*수|성\s*과\s*보\s*수|승\s*소\s*한\s*경\s*우)[^0-9]*?금\s*([0-9,]+)\s*원/;
         const successMatch = text.match(feeRegexSuccess);
         if (successMatch && !result['successFee' + level]) result['successFee' + level] = successMatch[1];
 
-        // (5) 소가
         const sogaMatch = text.match(/(?:소\s*가|소송목적의\s*값)[^0-9]*([0-9,]+)/);
         if (sogaMatch && !result['soga' + level]) result['soga' + level] = sogaMatch[1];
     }
@@ -332,44 +369,28 @@ function analyzeLegalDocuments(categorizedText) {
         }
     }
 
-    // 4. [NEW] 이체내역(송금) 정밀 분석 및 사용자 질문 준비
-    // 계약서가 없어 착수금 키워드를 못 찾았지만, 이체내역에 큰 금액이 있는 경우 감지
+    // 4. 이체내역(송금) 정밀 분석 (기존 유지)
     function scanForTransfers(text, level) {
-        // -500,000원 또는 출금 500,000원 등 (10만원 이상만)
         const transferRegex = /(?:출금|이체|송금|법무법인)[^0-9\-\n]*?[\-\s]([0-9,]{3,})(?:원|\s|$)/g;
-        // 은행 앱마다 표시 방식이 다르므로 단순히 "-" 기호 뒤의 숫자를 잡는 패턴도 추가
         const simpleMinusRegex = /[\-]\s*([0-9,]{3,})\s*원/g;
-        
-        let matches = [];
-        let match;
-        
-        // 패턴 1 확인
+        let matches = []; let match;
         while ((match = transferRegex.exec(text)) !== null) matches.push(match[1]);
-        // 패턴 2 확인
         while ((match = simpleMinusRegex.exec(text)) !== null) matches.push(match[1]);
 
         matches.forEach(amt => {
             let cleanAmt = amt.replace(/,/g, '');
             if (parseInt(cleanAmt) > 100000) { 
-                // 이미 추출된 금액과 중복되는지 확인
                 const alreadyFound = [
                     result.startFee1, result.successFee1, 
                     result.startFee2, result.successFee2, 
                     result.startFee3, result.successFee3
                 ].some(fee => fee && fee.replace(/,/g, '') === cleanAmt);
-                
-                // 중복되지 않는 새로운 금액이면 후보군에 등록
-                if (!alreadyFound) {
-                     // 중복 등록 방지
-                     if (!result.ambiguousAmounts.some(item => item.amount === amt)) {
-                         result.ambiguousAmounts.push({ amount: amt, level: level });
-                     }
+                if (!alreadyFound && !result.ambiguousAmounts.some(item => item.amount === amt)) {
+                     result.ambiguousAmounts.push({ amount: amt, level: level });
                 }
             }
         });
     }
-
-    // 각 영역에서 이체내역 스캔
     scanForTransfers(categorizedText[1].etc, 1);
     scanForTransfers(categorizedText[2].etc, 2);
     scanForTransfers(categorizedText[3].etc, 3);
@@ -388,35 +409,42 @@ function findBestMatch(text, patternArray) {
     return null;
 }
 
-// --- 6. 신청인 확인 및 데이터 주입 ---
+// --- 6. 신청인 확인 및 데이터 주입 (판결문 기반 자동 선택 로직 추가) ---
 function confirmApplicantProcess(data) {
-    // [NEW] 데이터 주입 전 사용자에게 미분류 이체내역 물어보기
-    processAmbiguousFees(data);
+    processAmbiguousFees(data); // 이체내역 확인
 
-    let candidateAppName = data.contractClientName || "원고(미확인)";
-    let candidateRespName = data.contractOpponentName || "피고(미확인)";
-
-    document.getElementById('modal-plaintiff-name').innerText = candidateAppName; 
-    document.getElementById('modal-defendant-name').innerText = candidateRespName;
+    // [NEW] 판결문에서 파악된 원/피고 이름 및 승소 여부 반영
+    let extractedPlaintiff = data.plaintiffName || data.contractClientName || "원고(미확인)";
+    let extractedDefendant = data.defendantName || data.contractOpponentName || "피고(미확인)";
+    
+    // 모달에 이름 표시
+    document.getElementById('modal-plaintiff-name').innerText = extractedPlaintiff; 
+    document.getElementById('modal-defendant-name').innerText = extractedDefendant;
+    
+    // [NEW] 승소측(비용신청권자)이 파악되었다면 자동 선택 유도 (혹은 모달 순서 배치)
+    // 여기서는 사용자가 모달에서 클릭해야 하므로, 안내 메시지를 띄우거나 콘솔 로그 등으로 확인 가능
+    // 만약 data.winnerSide가 있으면, 해당 쪽을 신청인으로 간주하고 처리할 수도 있으나
+    // 사용자가 명시적으로 선택하게 하는 기존 UX를 유지하되, 이름이 정확히 매핑되도록 함.
+    
     document.getElementById('applicant-selection-modal').classList.remove('hidden');
+    
+    // (선택적) 만약 승소측이 확실하면 알림을 줄 수도 있음
+    if (data.winnerSide) {
+        const winnerName = (data.winnerSide === 'plaintiff') ? extractedPlaintiff : extractedDefendant;
+        console.log(`판결문 분석 결과, 소송비용 신청 권리자는 ${winnerName} (${data.winnerSide})로 추정됩니다.`);
+    }
 }
 
-// [NEW] 미분류 이체내역 처리 함수
+// [NEW] 미분류 이체내역 처리 함수 (기존 동일)
 function processAmbiguousFees(data) {
     if (!data.ambiguousAmounts || data.ambiguousAmounts.length === 0) return;
-
-    // 질문 중복 방지
     let handledAmounts = [];
-
     data.ambiguousAmounts.forEach(item => {
         if (handledAmounts.includes(item.amount)) return;
-        
         let assigned = false;
         const amt = item.amount;
-        // 파일명 등에서 추정된 심급 (common이면 '알 수 없음')
         const levelText = (item.level !== 'common') ? `${item.level}심` : "심급 미상";
 
-        // 로직 1: 추정된 심급이 있으면 해당 심급 착수금/성공보수 우선 질문
         if (item.level !== 'common') {
             if (!data['startFee' + item.level]) {
                 if (confirm(`[이체내역 분석]\n'${amt}원'이 발견되었습니다 (${levelText} 추정).\n이 금액을 '${item.level}심 착수금'으로 입력하시겠습니까?`)) {
@@ -431,23 +459,11 @@ function processAmbiguousFees(data) {
                 }
             }
         }
-        
-        // 로직 2: 추정이 안되거나(common) 위에서 거절한 경우 -> 빈 슬롯 순차 질문
         if (!assigned) {
-            // 1심 착수금이 비어있다면 물어봄
-            if (!data.startFee1 && confirm(`'${amt}원'을 '1심 착수금'으로 설정할까요?`)) { 
-                data.startFee1 = amt; assigned = true; 
-            }
-            // 2심 착수금이 비어있다면
-            else if (!data.startFee2 && confirm(`'${amt}원'을 '2심 착수금'으로 설정할까요?`)) { 
-                data.startFee2 = amt; assigned = true; 
-            }
-            // 3심 착수금이 비어있다면
-            else if (!data.startFee3 && confirm(`'${amt}원'을 '3심 착수금'으로 설정할까요?`)) { 
-                data.startFee3 = amt; assigned = true; 
-            }
+            if (!data.startFee1 && confirm(`'${amt}원'을 '1심 착수금'으로 설정할까요?`)) { data.startFee1 = amt; assigned = true; }
+            else if (!data.startFee2 && confirm(`'${amt}원'을 '2심 착수금'으로 설정할까요?`)) { data.startFee2 = amt; assigned = true; }
+            else if (!data.startFee3 && confirm(`'${amt}원'을 '3심 착수금'으로 설정할까요?`)) { data.startFee3 = amt; assigned = true; }
         }
-        
         handledAmounts.push(amt);
     });
 }
@@ -456,10 +472,12 @@ function selectApplicant(selectionSide) {
     document.getElementById('applicant-selection-modal').classList.add('hidden'); 
 
     const data = aiExtractedData;
+    // 모달에 표시된 이름 가져오기
     const leftName = document.getElementById('modal-plaintiff-name').innerText;
     const rightName = document.getElementById('modal-defendant-name').innerText;
 
     let finalAppName = "", finalRespName = "";
+    // 사용자가 '왼쪽(원고측)'을 선택했는지 '오른쪽(피고측)'을 선택했는지에 따라 할당
     if (selectionSide === 'plaintiff') { 
         finalAppName = leftName; finalRespName = rightName;
     } else { 
@@ -469,11 +487,19 @@ function selectApplicant(selectionSide) {
     // 이름 입력
     if(finalAppName && !finalAppName.includes("미확인")) setAndTrigger('applicantName', finalAppName);
     
-    // 주소 입력
-    if(data.clientAddress && finalAppName === data.contractClientName) {
-        setAndTrigger('applicantAddr', data.clientAddress);
+    // [NEW] 주소 입력 로직 강화
+    // 사용자가 선택한 쪽(신청인)이 원고인지 피고인지 판단하여 판결문에서 추출한 주소 할당
+    if (selectionSide === 'plaintiff') {
+        // 신청인이 원고인 경우
+        if (data.plaintiffAddr) setAndTrigger('applicantAddr', data.plaintiffAddr);
+        else if (data.clientAddress) setAndTrigger('applicantAddr', data.clientAddress);
+    } else {
+        // 신청인이 피고인 경우
+        if (data.defendantAddr) setAndTrigger('applicantAddr', data.defendantAddr);
+        // 피고 주소가 판결문에 없으면 계약서 주소라도 시도 (보통 계약서엔 갑 주소만 있지만)
+        else if (data.clientAddress && finalAppName === data.contractClientName) setAndTrigger('applicantAddr', data.clientAddress);
     }
-    
+
     // 피신청인 입력
     if(finalRespName && !finalRespName.includes("미확인")) {
         document.getElementById('step3-area').classList.remove('hidden');
