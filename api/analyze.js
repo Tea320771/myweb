@@ -1,11 +1,10 @@
 /* ==========================================
    api/analyze.js
-   - [DEBUG MODE] 에러 메시지 원본 출력
-   - "1분 대기" 추측 로직을 제거하고 구글의 실제 응답을 보여줍니다.
+   - [FINAL FIX] 무료로 사용 가능한 실험용 모델(gemini-2.0-flash-exp) 적용
    ========================================== */
 
 export default async function handler(req, res) {
-    // 1. CORS 설정
+    // 1. CORS 설정 (접속 허용)
     res.setHeader('Access-Control-Allow-Credentials', true);
     res.setHeader('Access-Control-Allow-Origin', '*'); 
     res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
@@ -23,8 +22,8 @@ export default async function handler(req, res) {
     try {
         const { parts } = req.body;
 
-        // 모델: gemini-2.0-flash
-        const targetModel = 'models/gemini-2.0-flash';
+        // [핵심 변경] 'limit: 0' 에러가 뜨는 정식 버전 대신, 무료로 열려있는 '실험용(exp) 버전' 사용
+        const targetModel = 'models/gemini-2.0-flash-exp';
         const url = `https://generativelanguage.googleapis.com/v1beta/${targetModel}:generateContent?key=${GEMINI_API_KEY}`;
         
         const response = await fetch(url, {
@@ -37,10 +36,18 @@ export default async function handler(req, res) {
             const errorData = await response.json().catch(() => ({}));
             console.error("Gemini API Error:", errorData);
             
-            // [수정됨] 내 맘대로 에러를 해석하지 않고, 구글의 원본 메시지를 그대로 보냄
-            // 이렇게 해야 'Daily Limit'인지 'Rate Limit'인지 정확히 알 수 있음
-            return res.status(response.status).json({
-                error: `[구글 서버 응답] ${errorData.error?.message || response.statusText}`
+            // 에러 메시지 원본 전달
+            const specificMessage = errorData.error?.message || JSON.stringify(errorData);
+            
+            // 429 Too Many Requests 처리
+            if (response.status === 429) {
+                 return res.status(429).json({ 
+                    error: `[할당량 초과] ${specificMessage}` 
+                });
+            }
+
+            return res.status(response.status).json({ 
+                error: `[Google Error ${response.status}] ${specificMessage}` 
             });
         }
 
