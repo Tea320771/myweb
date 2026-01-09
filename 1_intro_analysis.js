@@ -1,7 +1,8 @@
 /* ==========================================
    1_intro_analysis.js
-   - [UPDATE] 프롬프트 강화: 당사자 이름/주소 정밀 인식, 심급별 소가/선고일 추출 기준 명시
-   - [UPDATE] Gemini 모델명: models/gemini-flash-latest 사용 (api/analyze.js와 연동)
+   - [UPDATE] 프롬프트 강화: 파일명 기반 심급 추론, 청구취지 구분 명확화
+   - [FIX] 날짜 데이터 전달 오류 수정 (rulingDate -> date 매핑)
+   - [UPDATE] Gemini 모델명: models/gemini-flash-latest 사용
    ========================================== */
 
 // --- 1. 기본 보안 및 초기화 설정 ---
@@ -31,7 +32,7 @@ let queuedFiles = [];
 let aiExtractedData = {};   
 const pageOrder = ['introPage', 'caseInfoPage', 'calcPage', 'evidencePage', 'previewPage'];
 
-// [NEW] 이체내역 검토를 위한 상태 변수
+// 이체내역 검토를 위한 상태 변수
 let feeReviewQueue = [];
 let feeReviewIndex = 0;
 
@@ -145,25 +146,28 @@ async function startAnalysis() {
     try {
         let parts = [];
         
-        // [핵심] 시스템 프롬프트 강화
+        // [수정됨] 프롬프트 강화: 파일명 우선 심급 판단 및 데이터 추출 기준 명확화
         const systemPrompt = `
-        너는 유능한 법률 사무원이야. 제공된 법률 문서 이미지(판결문 등)를 아주 정밀하게 분석해서 소송비용확정신청에 필요한 정보를 JSON 포맷으로 추출해줘.
+        너는 유능한 법률 사무원이야. 제공된 법률 문서 이미지(판결문, 이체내역 등)를 아주 정밀하게 분석해서 소송비용확정신청에 필요한 정보를 JSON 포맷으로 추출해줘.
 
         [분석 지침]
-        1. **당사자 이름과 주소 필독**: 
+        1. **심급 추론 (중요)**: 
+           - **파일명(fileName)**에 '1심', '2심', '3심' 등의 단어가 포함되어 있다면, 해당 문서의 내용은 반드시 그 심급에 해당하는 정보로 처리해라. (예: '3심 이체 내역.pdf'의 금액은 3심 비용이다)
+           
+        2. **당사자 이름과 주소 필독**: 
            - 판결문 당사자 목록에서 원고, 피고의 이름을 정확히 읽어라. (주의: '이을녀'를 '이슬녀'로 오인하지 않도록 획을 주의깊게 볼 것)
            - 이름 바로 아래 또는 옆에 적힌 **도로명 주소**를 반드시 찾아내어 'plaintiffAddr', 'defendantAddr'에 기입해라. (주소 누락 금지)
         
-        2. **판결선고일 추출**:
-           - 각 심급 판결문 상단에 있는 **'판결선고'** 또는 **'선고'** 옆 날짜(예: 2024. 10. 10.)를 찾아 'rulingDate1', 'rulingDate2', 'rulingDate3'에 각각 넣어라.
+        3. **판결선고일 추출**:
+           - 각 심급 판결문 상단에 있는 **'판결선고'** 또는 **'선고'** 옆 날짜(예: 2024. 10. 10.)를 찾아라.
         
-        3. **소송목적의 값(소가) 추출 기준**:
+        4. **소송목적의 값(소가) 추출 기준**:
            - **1심 소가(soga1)**: 1심 판결문의 **[청구취지]** 란에 기재된 금액을 찾아라. (예: "피고는 원고에게 100,000,000원을..." -> 100000000)
            - **2심 소가(soga2)**: 2심 판결문의 **[청구취지 및 항소취지]** 란에 기재된 금액을 찾아라.
            - 금액은 '원' 단위를 제외한 숫자만 추출해라.
 
-        4. **비용 부담자**: '주문'을 보고 'winnerSide'('plaintiff' 또는 'defendant')를 명시해라.
-        5. **금액 추정**: 이체내역 등에서 착수금/성공보수로 보이는 금액은 'ambiguousAmounts'에 담아라.
+        5. **비용 부담자**: '주문'을 보고 'winnerSide'('plaintiff' 또는 'defendant')를 명시해라.
+        6. **금액 추정**: 착수금/성공보수로 보이는 금액을 추출하되, 파일명 등으로 심급이 명확하면 'startFee2', 'startFee3' 등에 직접 할당하고, 불분명하면 'ambiguousAmounts'에 담아라.
 
         [JSON 구조]
         {
@@ -184,6 +188,9 @@ async function startAnalysis() {
             const file = queuedFiles[i];
             logsContainer.innerHTML += `<div class="log-item log-info">📂 파일 읽는 중... (${file.name})</div>`;
             const base64Data = await fileToBase64(file);
+            
+            // 파일명 정보를 AI에게 함께 전달 (메타데이터 활용)
+            parts.push({ text: `[파일정보: ${file.name}]` });
             parts.push({
                 inline_data: { mime_type: file.type, data: base64Data }
             });
@@ -356,14 +363,16 @@ function fillRemainingData(data) {
 
     if(data.courtName1) setAndTrigger('courtName1', data.courtName1);
     if(data.caseNo1) setAndTrigger('caseNo1', data.caseNo1);
-    if(data.rulingDate1) setAndTrigger('rulingDate1', data.rulingDate1);
+    // [수정됨] rulingDate1 -> date1 (ID 불일치 수정)
+    if(data.rulingDate1) setAndTrigger('date1', data.rulingDate1);
     if(data.soga1) setAndTrigger('soga1', data.soga1);
     if(data.startFee1) setAndTrigger('startFee1', data.startFee1);
     if(data.successFee1) setAndTrigger('successFee1', data.successFee1);
 
     if(data.courtName2) setAndTrigger('courtName2', data.courtName2);
     if(data.caseNo2) setAndTrigger('caseNo2', data.caseNo2);
-    if(data.rulingDate2) setAndTrigger('rulingDate2', data.rulingDate2);
+    // [수정됨] rulingDate2 -> date2
+    if(data.rulingDate2) setAndTrigger('date2', data.rulingDate2);
     if(data.soga2) setAndTrigger('soga2', data.soga2);
     if(data.startFee2) setAndTrigger('startFee2', data.startFee2);
     if(data.successFee2) setAndTrigger('successFee2', data.successFee2);
@@ -372,7 +381,8 @@ function fillRemainingData(data) {
     else if(data.caseNo3) setAndTrigger('courtName3', '대법원'); 
     
     if(data.caseNo3) setAndTrigger('caseNo3', data.caseNo3);
-    if(data.rulingDate3) setAndTrigger('rulingDate3', data.rulingDate3);
+    // [수정됨] rulingDate3 -> date3
+    if(data.rulingDate3) setAndTrigger('date3', data.rulingDate3);
     if(data.startFee3) setAndTrigger('startFee3', data.startFee3);
     if(data.successFee3) setAndTrigger('successFee3', data.successFee3);
 }
