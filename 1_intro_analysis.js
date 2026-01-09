@@ -1,7 +1,8 @@
 /* ==========================================
    1_intro_analysis.js
    - 기본 설정, 네비게이션, 파일 업로드
-   - [UPDATE] OCR.space API 연동 및 정규식 강화 (표/줄바꿈 완벽 대응)
+   - [UPDATE] 판결문/계약서 구분 및 사건번호 우선순위 적용
+   - [UPDATE] 이체내역(송금) 금액 추출 및 사용자 확인 로직 추가
    ========================================== */
 
 // ✅ 사용자가 제공한 OCR.space API 키 적용
@@ -89,7 +90,6 @@ function queueFiles(files) {
     if (!files || files.length === 0) return;
     for (let i = 0; i < files.length; i++) {
         const file = files[i];
-        // PDF 또는 이미지 허용
         if (!file.type.startsWith('image/') && file.type !== 'application/pdf') {
             alert(`지원하지 않는 파일 형식입니다: ${file.name}\n(이미지 또는 PDF만 가능)`);
             continue;
@@ -141,8 +141,13 @@ async function startAnalysis() {
     logsContainer.style.display = 'block';
     logsContainer.innerHTML = `<div class="log-item log-info">분석 엔진(OCR.space) 연결 중...</div>`;
     
-    // 심급별 텍스트 저장용 (1:1심, 2:2심, 3:3심, common:전체)
-    let categorizedText = { 1: "", 2: "", 3: "", common: "" };
+    // 심급별 텍스트 저장용 (판결문과 일반 문서를 분리하여 저장)
+    let categorizedText = { 
+        1: { jud: "", etc: "" }, 
+        2: { jud: "", etc: "" }, 
+        3: { jud: "", etc: "" }, 
+        common: "" 
+    };
 
     try {
         for (let i = 0; i < queuedFiles.length; i++) {
@@ -150,21 +155,17 @@ async function startAnalysis() {
             logsContainer.innerHTML += `<div class="log-item log-info">📡 서버 전송 및 분석 중... (${file.name})</div>`;
             logsContainer.scrollTop = logsContainer.scrollHeight;
 
-            // FormData 생성
             let formData = new FormData();
             formData.append("file", file);
-            formData.append("language", "kor"); // 한글 설정
+            formData.append("language", "kor");
             formData.append("isOverlayRequired", "false");
-            formData.append("OCREngine", "2"); // Engine 2가 한글/숫자 인식률이 훨씬 좋음
+            formData.append("OCREngine", "2");
             formData.append("scale", "true");
             formData.append("detectOrientation", "true");
 
-            // API 호출
             const response = await fetch("https://api.ocr.space/parse/image", {
                 method: "POST",
-                headers: {
-                    "apikey": OCR_API_KEY
-                },
+                headers: { "apikey": OCR_API_KEY },
                 body: formData
             });
 
@@ -175,19 +176,15 @@ async function startAnalysis() {
                 throw new Error(result.ErrorMessage?.[0] || "OCR 처리 중 오류 발생");
             }
 
-            // 결과 텍스트 추출 (페이지별 통합)
             let extractedText = "";
             if (result.ParsedResults && result.ParsedResults.length > 0) {
-                result.ParsedResults.forEach(page => {
-                    extractedText += " " + page.ParsedText;
-                });
+                result.ParsedResults.forEach(page => { extractedText += " " + page.ParsedText; });
             }
 
-            // 줄바꿈 및 다중 공백 처리 (정규식을 위해 한 줄로 만듦)
             const normalizedText = extractedText.replace(/\r\n|\n|\r/g, ' ').replace(/\s+/g, ' ');
-            console.log(`[${file.name}] 추출 텍스트:`, normalizedText); // 디버깅용 콘솔 출력
+            console.log(`[${file.name}] 추출 텍스트:`, normalizedText);
 
-            // 파일명 또는 내용 기반 심급 추정
+            // 심급 추정
             let targetInstance = 'common';
             if (file.name.includes("1심") || file.name.includes("지방")) targetInstance = 1;
             else if (file.name.includes("2심") || file.name.includes("항소") || file.name.includes("고등")) targetInstance = 2;
@@ -198,8 +195,18 @@ async function startAnalysis() {
                 else if (normalizedText.includes("대법원")) targetInstance = 3;
             }
 
-            categorizedText[targetInstance] += ` ${normalizedText}`;
-            categorizedText['common'] += ` ${normalizedText}`;
+            // 문서 종류 판별 (판결문 vs 계약서/이체내역)
+            const isJudgment = normalizedText.includes("판결") && (normalizedText.includes("주문") || normalizedText.includes("이유"));
+
+            if (targetInstance !== 'common') {
+                if (isJudgment) {
+                    categorizedText[targetInstance].jud += ` ${normalizedText}`;
+                } else {
+                    categorizedText[targetInstance].etc += ` ${normalizedText}`;
+                }
+            } else {
+                categorizedText['common'] += ` ${normalizedText}`;
+            }
             
             logsContainer.innerHTML += `<div class="log-item log-success">✅ ${file.name} 분석 완료</div>`;
             logsContainer.scrollTop = logsContainer.scrollHeight;
@@ -220,7 +227,7 @@ async function startAnalysis() {
     }
 }
 
-// --- [핵심] 5. 데이터 추출 알고리즘 (정규식 강화) ---
+// --- [핵심] 5. 데이터 추출 알고리즘 (판결문 우선 + 이체내역 분석 로직 추가) ---
 function analyzeLegalDocuments(categorizedText) {
     const result = {
         courtName1: null, caseNo1: null,
@@ -232,10 +239,14 @@ function analyzeLegalDocuments(categorizedText) {
         soga1: null, soga2: null, soga3: null,
         startFee1: null, successFee1: null,
         startFee2: null, successFee2: null,
-        startFee3: null, successFee3: null
+        startFee3: null, successFee3: null,
+        ambiguousAmounts: [] // 미분류 이체 내역 저장용
     };
 
-    const allText = categorizedText.common + categorizedText[1] + categorizedText[2] + categorizedText[3];
+    const allText = categorizedText.common 
+        + categorizedText[1].jud + categorizedText[1].etc 
+        + categorizedText[2].jud + categorizedText[2].etc 
+        + categorizedText[3].jud + categorizedText[3].etc;
 
     // 1. 당사자(원고/피고) 추출
     const clientPatterns = [
@@ -256,59 +267,59 @@ function analyzeLegalDocuments(categorizedText) {
     const addrMatch = allText.match(addrRegex);
     if (addrMatch) result.clientAddress = addrMatch[1].trim();
 
-    // 3. 심급별 상세 정보 추출 함수
-    function extractFromText(text, level) {
+    // 3. 심급별 상세 정보 추출
+    function extractFromText(text, level, isJudgmentSource) {
         if (!text) return;
 
         // (1) 법원명
-        const courtRegex = /([가-힣]{2,}(?:지방|고등|가정|행정|회생)법원(?:[가-힣]*지원)?|대법원)/g;
-        let cMatch;
-        while ((cMatch = courtRegex.exec(text)) !== null) {
-            const name = cMatch[1];
-            if (level === 3 && name === "대법원") { result.courtName3 = name; break; }
-            if (level === 2 && (name.includes("고등") || name.includes("지방"))) { result.courtName2 = name; if(name.includes("고등")) break; }
-            if (level === 1 && !name.includes("고등") && !name.includes("대법원")) { result.courtName1 = name; break; }
+        if (!result['courtName' + level] || isJudgmentSource) {
+            const courtRegex = /([가-힣]{2,}(?:지방|고등|가정|행정|회생)법원(?:[가-힣]*지원)?|대법원)/g;
+            let cMatch;
+            while ((cMatch = courtRegex.exec(text)) !== null) {
+                const name = cMatch[1];
+                if (level === 3 && name === "대법원") { result.courtName3 = name; break; }
+                if (level === 2 && (name.includes("고등") || name.includes("지방"))) { result.courtName2 = name; if(name.includes("고등")) break; }
+                if (level === 1 && !name.includes("고등") && !name.includes("대법원")) { result.courtName1 = name; break; }
+            }
         }
 
-        // (2) 사건번호 [핵심 수정 사항]
-        // 패턴 설명: 
-        // 1. (20\d{2}) : 연도 2023 등
-        // 2. \s*([가-힣]{1,5}) : 가합, 가단 등 (띄어쓰기 허용)
-        // 3. [^0-9]*? : 숫자 이외의 문자가 끼어있어도 됨 (예: "사건명 손해배상(기)") -> 여기가 핵심!
-        // 4. (\d{3,}) : 3자리 이상의 숫자 (사건번호 일련번호)
-        const caseNoRegex = /(20\d{2})\s*([가-힣]{1,5})[^0-9]*?(\d{3,})/;
-        const caseMatch = text.match(caseNoRegex);
-        if (caseMatch) {
-            // 추출된 연도 + 구분문자 + 번호를 합침
-            result['caseNo' + level] = caseMatch[1] + caseMatch[2] + caseMatch[3];
+        // (2) 사건번호 [판결문 우선 적용]
+        if (!result['caseNo' + level] || isJudgmentSource) {
+            const caseNoRegex = /(20\d{2})\s*([가-힣]{1,5})[^0-9]*?(\d{3,})/;
+            const caseMatch = text.match(caseNoRegex);
+            if (caseMatch) {
+                const fullCaseNo = caseMatch[1] + caseMatch[2] + caseMatch[3];
+                if (isJudgmentSource) {
+                    result['caseNo' + level] = fullCaseNo;
+                } else if (!result['caseNo' + level]) {
+                    result['caseNo' + level] = fullCaseNo;
+                }
+            }
         }
 
-        // (3) 착수금 (기존 유지)
+        // (3) 착수금 (명시적 키워드)
         const feeRegexStart = /(?:착\s*수\s*금|착\s*수\s*보\s*수)[^0-9]*?금\s*([0-9,]+)\s*원/;
         const startMatch = text.match(feeRegexStart);
-        if (startMatch) result['startFee' + level] = startMatch[1];
+        if (startMatch && !result['startFee' + level]) result['startFee' + level] = startMatch[1];
 
-        // (4) 성공보수 [핵심 수정 사항]
-        // "승소한 경우 : 금 7,400,000원" 패턴을 잡기 위해
-        // "성공보수" 키워드 외에 "승소한 경우" 등 조건부 문구 뒤에 나오는 "금 OOO원"을 찾음
+        // (4) 성공보수 (명시적 키워드)
         const feeRegexSuccess = /(?:성\s*공\s*보\s*수|성\s*과\s*보\s*수|승\s*소\s*한\s*경\s*우)[^0-9]*?금\s*([0-9,]+)\s*원/;
         const successMatch = text.match(feeRegexSuccess);
-        if (successMatch) result['successFee' + level] = successMatch[1];
+        if (successMatch && !result['successFee' + level]) result['successFee' + level] = successMatch[1];
 
         // (5) 소가
         const sogaMatch = text.match(/(?:소\s*가|소송목적의\s*값)[^0-9]*([0-9,]+)/);
-        if (sogaMatch) result['soga' + level] = sogaMatch[1];
+        if (sogaMatch && !result['soga' + level]) result['soga' + level] = sogaMatch[1];
     }
 
-    // 각 심급 텍스트 분석 실행
-    if (categorizedText[1]) extractFromText(categorizedText[1], 1);
-    if (categorizedText[2]) extractFromText(categorizedText[2], 2);
-    if (categorizedText[3]) extractFromText(categorizedText[3], 3);
+    [1, 2, 3].forEach(level => {
+        extractFromText(categorizedText[level].jud, level, true);
+        extractFromText(categorizedText[level].etc, level, false);
+    });
     
-    // Fallback: 분류되지 않은 common 텍스트에서도 누락된 정보 검색
+    // Fallback
     if (!result.courtName1 && !result.courtName2 && !result.courtName3) {
-        extractFromText(categorizedText.common, 1);
-        // 결과 재배치
+        extractFromText(categorizedText.common, 1, false);
         if(result.courtName1 && result.courtName1.includes("대법원")) { 
             result.courtName3 = result.courtName1; result.courtName1 = null; 
             if(result.caseNo1) { result.caseNo3 = result.caseNo1; result.caseNo1 = null; }
@@ -320,6 +331,49 @@ function analyzeLegalDocuments(categorizedText) {
              if(result.startFee1) { result.startFee2 = result.startFee1; result.startFee1 = null; }
         }
     }
+
+    // 4. [NEW] 이체내역(송금) 정밀 분석 및 사용자 질문 준비
+    // 계약서가 없어 착수금 키워드를 못 찾았지만, 이체내역에 큰 금액이 있는 경우 감지
+    function scanForTransfers(text, level) {
+        // -500,000원 또는 출금 500,000원 등 (10만원 이상만)
+        const transferRegex = /(?:출금|이체|송금|법무법인)[^0-9\-\n]*?[\-\s]([0-9,]{3,})(?:원|\s|$)/g;
+        // 은행 앱마다 표시 방식이 다르므로 단순히 "-" 기호 뒤의 숫자를 잡는 패턴도 추가
+        const simpleMinusRegex = /[\-]\s*([0-9,]{3,})\s*원/g;
+        
+        let matches = [];
+        let match;
+        
+        // 패턴 1 확인
+        while ((match = transferRegex.exec(text)) !== null) matches.push(match[1]);
+        // 패턴 2 확인
+        while ((match = simpleMinusRegex.exec(text)) !== null) matches.push(match[1]);
+
+        matches.forEach(amt => {
+            let cleanAmt = amt.replace(/,/g, '');
+            if (parseInt(cleanAmt) > 100000) { 
+                // 이미 추출된 금액과 중복되는지 확인
+                const alreadyFound = [
+                    result.startFee1, result.successFee1, 
+                    result.startFee2, result.successFee2, 
+                    result.startFee3, result.successFee3
+                ].some(fee => fee && fee.replace(/,/g, '') === cleanAmt);
+                
+                // 중복되지 않는 새로운 금액이면 후보군에 등록
+                if (!alreadyFound) {
+                     // 중복 등록 방지
+                     if (!result.ambiguousAmounts.some(item => item.amount === amt)) {
+                         result.ambiguousAmounts.push({ amount: amt, level: level });
+                     }
+                }
+            }
+        });
+    }
+
+    // 각 영역에서 이체내역 스캔
+    scanForTransfers(categorizedText[1].etc, 1);
+    scanForTransfers(categorizedText[2].etc, 2);
+    scanForTransfers(categorizedText[3].etc, 3);
+    scanForTransfers(categorizedText.common, 'common');
 
     return result;
 }
@@ -336,12 +390,66 @@ function findBestMatch(text, patternArray) {
 
 // --- 6. 신청인 확인 및 데이터 주입 ---
 function confirmApplicantProcess(data) {
+    // [NEW] 데이터 주입 전 사용자에게 미분류 이체내역 물어보기
+    processAmbiguousFees(data);
+
     let candidateAppName = data.contractClientName || "원고(미확인)";
     let candidateRespName = data.contractOpponentName || "피고(미확인)";
 
     document.getElementById('modal-plaintiff-name').innerText = candidateAppName; 
     document.getElementById('modal-defendant-name').innerText = candidateRespName;
     document.getElementById('applicant-selection-modal').classList.remove('hidden');
+}
+
+// [NEW] 미분류 이체내역 처리 함수
+function processAmbiguousFees(data) {
+    if (!data.ambiguousAmounts || data.ambiguousAmounts.length === 0) return;
+
+    // 질문 중복 방지
+    let handledAmounts = [];
+
+    data.ambiguousAmounts.forEach(item => {
+        if (handledAmounts.includes(item.amount)) return;
+        
+        let assigned = false;
+        const amt = item.amount;
+        // 파일명 등에서 추정된 심급 (common이면 '알 수 없음')
+        const levelText = (item.level !== 'common') ? `${item.level}심` : "심급 미상";
+
+        // 로직 1: 추정된 심급이 있으면 해당 심급 착수금/성공보수 우선 질문
+        if (item.level !== 'common') {
+            if (!data['startFee' + item.level]) {
+                if (confirm(`[이체내역 분석]\n'${amt}원'이 발견되었습니다 (${levelText} 추정).\n이 금액을 '${item.level}심 착수금'으로 입력하시겠습니까?`)) {
+                    data['startFee' + item.level] = amt;
+                    assigned = true;
+                }
+            }
+            if (!assigned && !data['successFee' + item.level]) {
+                if (confirm(`그럼 '${amt}원'을 '${item.level}심 성공보수'로 입력하시겠습니까?`)) {
+                    data['successFee' + item.level] = amt;
+                    assigned = true;
+                }
+            }
+        }
+        
+        // 로직 2: 추정이 안되거나(common) 위에서 거절한 경우 -> 빈 슬롯 순차 질문
+        if (!assigned) {
+            // 1심 착수금이 비어있다면 물어봄
+            if (!data.startFee1 && confirm(`'${amt}원'을 '1심 착수금'으로 설정할까요?`)) { 
+                data.startFee1 = amt; assigned = true; 
+            }
+            // 2심 착수금이 비어있다면
+            else if (!data.startFee2 && confirm(`'${amt}원'을 '2심 착수금'으로 설정할까요?`)) { 
+                data.startFee2 = amt; assigned = true; 
+            }
+            // 3심 착수금이 비어있다면
+            else if (!data.startFee3 && confirm(`'${amt}원'을 '3심 착수금'으로 설정할까요?`)) { 
+                data.startFee3 = amt; assigned = true; 
+            }
+        }
+        
+        handledAmounts.push(amt);
+    });
 }
 
 function selectApplicant(selectionSide) {
