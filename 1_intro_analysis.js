@@ -1,8 +1,7 @@
 /* ==========================================
    1_intro_analysis.js
-   - [UPDATE] 진단 모드 제거 및 Gemini 2.0 적용
-   - [UPDATE] 이체내역 확인을 '예쁜 모달'로 변경
-   - [FIX] 에러 메시지 강제 변환 로직 삭제 (원본 에러 표시)
+   - [UPDATE] 프롬프트 강화: 당사자 이름/주소 정밀 인식, 심급별 소가/선고일 추출 기준 명시
+   - [UPDATE] Gemini 모델명: models/gemini-flash-latest 사용 (api/analyze.js와 연동)
    ========================================== */
 
 // --- 1. 기본 보안 및 초기화 설정 ---
@@ -141,22 +140,31 @@ async function startAnalysis() {
     
     actionArea.classList.add('hidden'); 
     logsContainer.style.display = 'block';
-    logsContainer.innerHTML = `<div class="log-item log-info">AI 분석 엔진(Gemini 2.0) 준비 중...</div>`;
+    logsContainer.innerHTML = `<div class="log-item log-info">AI 분석 엔진(Gemini) 준비 중...</div>`;
 
     try {
         let parts = [];
         
-        // 시스템 프롬프트
+        // [핵심] 시스템 프롬프트 강화
         const systemPrompt = `
-        너는 유능한 법률 사무원이야. 제공된 법률 문서 이미지들을 분석해서 소송비용확정신청에 필요한 정보를 JSON 포맷으로 추출해줘.
+        너는 유능한 법률 사무원이야. 제공된 법률 문서 이미지(판결문 등)를 아주 정밀하게 분석해서 소송비용확정신청에 필요한 정보를 JSON 포맷으로 추출해줘.
+
+        [분석 지침]
+        1. **당사자 이름과 주소 필독**: 
+           - 판결문 당사자 목록에서 원고, 피고의 이름을 정확히 읽어라. (주의: '이을녀'를 '이슬녀'로 오인하지 않도록 획을 주의깊게 볼 것)
+           - 이름 바로 아래 또는 옆에 적힌 **도로명 주소**를 반드시 찾아내어 'plaintiffAddr', 'defendantAddr'에 기입해라. (주소 누락 금지)
         
-        [분석 원칙]
-        1. '판결문' > '사건위임계약서' > '이체내역' 순서로 신뢰해라.
-        2. 당사자(원고, 피고)와 주소를 정확히 찾아라.
-        3. 비용 부담자(승패소)를 파악해 'winnerSide'('plaintiff' 또는 'defendant')에 명시해라.
-        4. 각 심급별 판결선고일, 착수금, 성공보수, 소가 등을 추출해라.
-        5. 'ambiguousAmounts'에는 이체내역 중 착수금/성공보수로 추정되나 확신할 수 없는 금액을 넣어라.
+        2. **판결선고일 추출**:
+           - 각 심급 판결문 상단에 있는 **'판결선고'** 또는 **'선고'** 옆 날짜(예: 2024. 10. 10.)를 찾아 'rulingDate1', 'rulingDate2', 'rulingDate3'에 각각 넣어라.
         
+        3. **소송목적의 값(소가) 추출 기준**:
+           - **1심 소가(soga1)**: 1심 판결문의 **[청구취지]** 란에 기재된 금액을 찾아라. (예: "피고는 원고에게 100,000,000원을..." -> 100000000)
+           - **2심 소가(soga2)**: 2심 판결문의 **[청구취지 및 항소취지]** 란에 기재된 금액을 찾아라.
+           - 금액은 '원' 단위를 제외한 숫자만 추출해라.
+
+        4. **비용 부담자**: '주문'을 보고 'winnerSide'('plaintiff' 또는 'defendant')를 명시해라.
+        5. **금액 추정**: 이체내역 등에서 착수금/성공보수로 보이는 금액은 'ambiguousAmounts'에 담아라.
+
         [JSON 구조]
         {
           "plaintiffName": "...", "plaintiffAddr": "...",
@@ -167,7 +175,7 @@ async function startAnalysis() {
           "courtName3": "...", "caseNo3": "...", "rulingDate3": "...", "startFee3": "...", "successFee3": "...",
           "ambiguousAmounts": [ {"amount": "금액", "level": "추정심급(없으면 common)"} ]
         }
-        반드시 JSON만 응답해.
+        반드시 JSON 형식의 텍스트만 응답해.
         `;
 
         parts.push({ text: systemPrompt });
@@ -188,7 +196,6 @@ async function startAnalysis() {
 
         logsContainer.innerHTML += `<div class="log-item log-success" style="font-weight:bold;">✨ AI 분석 완료! 결과 확인</div>`;
         
-        // 바로 모달을 띄우지 않고, 검토 프로세스 시작
         setTimeout(() => { startDataReview(aiExtractedData); }, 800);
 
     } catch (error) {
@@ -199,7 +206,7 @@ async function startAnalysis() {
     }
 }
 
-// --- [수정된 부분] 백엔드 호출 함수 ---
+// --- 백엔드 호출 함수 ---
 async function callBackendFunction(parts) {
     const url = '/api/analyze'; 
     
@@ -210,28 +217,17 @@ async function callBackendFunction(parts) {
     });
 
     if (!response.ok) {
-        // 서버에서 온 에러 데이터를 그대로 받습니다.
         const errorData = await response.json().catch(() => ({}));
-        
-        // [수정됨] 추측 로직 삭제: 서버가 보내준 error 메시지를 그대로 던집니다.
         throw new Error(errorData.error || `서버 통신 오류 (${response.status})`);
     }
 
     const result = await response.json();
-    
-    if (!result.candidates || result.candidates.length === 0) {
-        throw new Error("AI 분석 결과가 비어있습니다.");
-    }
+    if (!result.candidates || result.candidates.length === 0) throw new Error("분석 결과가 없습니다.");
 
     let rawText = result.candidates[0].content.parts[0].text;
     rawText = rawText.replace(/```json/g, "").replace(/```/g, "").trim();
     
-    try {
-        return JSON.parse(rawText);
-    } catch (e) {
-        console.error("JSON Parsing Error:", e);
-        throw new Error("AI 응답을 처리하는 데 실패했습니다.");
-    }
+    return JSON.parse(rawText);
 }
 
 function fileToBase64(file) {
@@ -243,12 +239,10 @@ function fileToBase64(file) {
     });
 }
 
-// --- 5. 데이터 검토 및 이체내역 확인 (모달 연동) ---
+// --- 5. 데이터 검토 및 이체내역 확인 ---
 
 function startDataReview(data) {
-    // 1. 이체내역(ambiguousAmounts)이 있으면 큐에 담고 모달 시작
     if (data.ambiguousAmounts && data.ambiguousAmounts.length > 0) {
-        // 중복 제거
         const uniqueFees = [];
         const seen = new Set();
         data.ambiguousAmounts.forEach(item => {
@@ -262,19 +256,17 @@ function startDataReview(data) {
         feeReviewIndex = 0;
         
         if (feeReviewQueue.length > 0) {
-            showFeeReviewModal(); // 이체내역 모달 띄우기
+            showFeeReviewModal(); 
         } else {
-            showApplicantModal(data); // 없으면 바로 당사자 확인
+            showApplicantModal(data);
         }
     } else {
         showApplicantModal(data);
     }
 }
 
-// [NEW] 이체내역 확인 모달 표시 함수
 function showFeeReviewModal() {
     if (feeReviewIndex >= feeReviewQueue.length) {
-        // 모든 검토가 끝나면 모달 닫고 당사자 확인으로 이동
         document.getElementById('fee-check-modal').classList.add('hidden');
         showApplicantModal(aiExtractedData);
         return;
@@ -283,38 +275,29 @@ function showFeeReviewModal() {
     const currentItem = feeReviewQueue[feeReviewIndex];
     const levelText = (currentItem.level !== 'common') ? `${currentItem.level}심` : "심급 미상";
 
-    // 모달 내용 업데이트
     document.getElementById('fee-amount-display').innerText = currentItem.amount;
     document.getElementById('fee-level-display').innerText = `(AI 추정: ${levelText})`;
     
-    // 모달 표시
     document.getElementById('fee-check-modal').classList.remove('hidden');
 }
 
-// [NEW] 버튼 클릭 시 처리 함수
 function resolveFee(action) {
     const currentItem = feeReviewQueue[feeReviewIndex];
     const data = aiExtractedData;
     
-    // 심급 결정 (추정된 것이 있으면 그것을, 없으면 순서대로)
     let targetLevel = currentItem.level;
     if (targetLevel === 'common') {
-        // 1심부터 비어있는 곳 찾기
         if (!data.startFee1) targetLevel = 1;
         else if (!data.startFee2) targetLevel = 2;
         else targetLevel = 3;
     }
 
     if (action === 'start') {
-        // 착수금으로 등록
         data['startFee' + targetLevel] = currentItem.amount;
     } else if (action === 'success') {
-        // 성공보수로 등록
         data['successFee' + targetLevel] = currentItem.amount;
     }
-    // 'skip'이면 아무것도 안함
 
-    // 다음 항목으로 이동
     feeReviewIndex++;
     showFeeReviewModal();
 }
