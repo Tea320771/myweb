@@ -1,12 +1,14 @@
 /* ==========================================
    1_intro_analysis.js
    - 기본 설정, 네비게이션, 파일 업로드
-   - [UPDATE] Google Gemini Vision API 모델명 수정 (gemini-1.5-flash-001)
-   - [FIX] API 중복 호출 제거 및 할당량 에러 처리 강화
+   - [UPDATE] 모델명 변경 (gemini-1.5-flash-latest) 및 버전 확인 로그 추가
    ========================================== */
 
 // ✅ 사용자가 제공한 Google Gemini API Key 적용
 const GEMINI_API_KEY = 'AIzaSyADC1J9RIykkSDbEa4iccPA28-AF04NX7w'; 
+
+// [중요] 코드가 갱신되었는지 확인하기 위한 로그
+console.log("✅ 1_intro_analysis.js 파일이 정상적으로 업데이트 되었습니다. (Model: gemini-1.5-flash-latest)");
 
 // --- 1. 기본 보안 및 초기화 설정 ---
 document.addEventListener('contextmenu', function (e) { e.preventDefault(); alert("보안 정책상 우클릭을 사용할 수 없습니다."); });
@@ -143,7 +145,6 @@ async function startAnalysis() {
     logsContainer.innerHTML = `<div class="log-item log-info">AI 분석 엔진(Gemini) 준비 중...</div>`;
 
     try {
-        // AI에게 보낼 데이터 배열 (프롬프트 + 이미지/PDF 데이터)
         let parts = [];
         
         // 시스템 프롬프트 설정
@@ -192,7 +193,6 @@ async function startAnalysis() {
             const base64Data = await fileToBase64(file);
             const mimeType = file.type;
             
-            // Gemini API 포맷에 맞춰 데이터 추가
             parts.push({
                 inline_data: {
                     mime_type: mimeType,
@@ -204,7 +204,7 @@ async function startAnalysis() {
         logsContainer.innerHTML += `<div class="log-item log-info" style="font-weight:bold;">🤖 Google Gemini가 문서를 분석 중입니다...</div>`;
         logsContainer.scrollTop = logsContainer.scrollHeight;
 
-        // Gemini API 호출 (여기서만 호출하도록 중복 제거됨)
+        // Gemini API 호출
         aiExtractedData = await callLLMForAnalysis(parts);
 
         logsContainer.innerHTML += `<div class="log-item log-success" style="font-weight:bold;">✨ AI 분석 완료! 결과 확인</div>`;
@@ -220,8 +220,8 @@ async function startAnalysis() {
 
 // --- [UPDATE] API 호출 및 에러 핸들링 함수 ---
 async function callLLMForAnalysis(parts) {
-    // [중요] 모델명을 gemini-1.5-flash-001 로 변경하여 'not found' 에러 해결
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-001:generateContent?key=${GEMINI_API_KEY}`;
+    // [중요] 모델명을 'gemini-1.5-flash-latest'로 변경하여 안정성 확보
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${GEMINI_API_KEY}`;
     
     const response = await fetch(url, {
         method: "POST",
@@ -230,14 +230,12 @@ async function callLLMForAnalysis(parts) {
     });
 
     if (!response.ok) {
-        // 에러 응답 파싱
         const errorData = await response.json().catch(() => ({}));
         const errorMessage = (errorData.error && errorData.error.message) ? errorData.error.message.toLowerCase() : "";
         const status = response.status;
 
         // 429 Too Many Requests 처리
         if (status === 429) {
-            // 하루 할당량(RPD) 초과 체크
             if (errorMessage.includes("day") || errorMessage.includes("daily") || errorMessage.includes("quota") || errorMessage.includes("exhausted")) {
                  if (errorMessage.includes("minute") || errorMessage.includes("rate")) {
                      throw new Error("1분 후 다시 시도해주세요."); // 분당 할당량 초과
@@ -245,9 +243,12 @@ async function callLLMForAnalysis(parts) {
                      throw new Error("하루 할당량이 초과하였어요. 내일 다시 시도해주세요."); // 하루 할당량 초과
                  }
             } else {
-                // 기본 분당 초과로 간주
                 throw new Error("1분 후 다시 시도해주세요.");
             }
+        }
+        // 404 모델 없음 에러 처리 (캐시 문제 등)
+        if (status === 404 && errorMessage.includes("not found")) {
+             throw new Error("모델을 찾을 수 없습니다. 브라우저 캐시를 삭제하고 다시 시도해주세요.");
         }
 
         throw new Error(`AI 서버 오류 (${status}): ${errorMessage || response.statusText}`);
@@ -259,7 +260,6 @@ async function callLLMForAnalysis(parts) {
         throw new Error("AI 분석 결과가 비어있습니다.");
     }
 
-    // 결과 파싱
     let rawText = result.candidates[0].content.parts[0].text;
     rawText = rawText.replace(/```json/g, "").replace(/```/g, "").trim();
     
@@ -342,7 +342,6 @@ function selectApplicant(selectionSide) {
 
     if(finalAppName && !finalAppName.includes("미확인")) setAndTrigger('applicantName', finalAppName);
     
-    // AI가 추출한 정확한 주소 사용
     if (selectionSide === 'plaintiff') {
         if (data.plaintiffAddr) setAndTrigger('applicantAddr', data.plaintiffAddr);
     } else {
