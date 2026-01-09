@@ -1,7 +1,6 @@
 /* ==========================================
    3_calculator.js
-   - 소송비용 통합 계산기 로직
-   - 계산 수식, 포맷팅, 가사 사건 처리
+   - [UPDATE] 비율 계산 로직 추가 (parseRatio, calculateAll)
    ========================================== */
 
 function goToCalculator() {
@@ -84,7 +83,6 @@ function formatCurrency(input, idSuffix) {
         const koreanEl = document.getElementById('korean' + idSuffix);
         if(koreanEl) koreanEl.innerText = '0원';
     }
-    // 값이 바뀔 때마다 계산 및 버튼 상태 체크
     calculateAll();
 }
 
@@ -93,12 +91,11 @@ function updateNextCardVisibility() {
     const card1 = document.getElementById('card-1'); card1.classList.remove('card-hidden'); card1.style.display = 'flex';
     const card2 = document.getElementById('card-2');
     let showCard2 = false;
-    if (maxLevel >= 2) showCard2 = true; // 2심 사건이면 무조건 표시 (데이터 없어도)
+    if (maxLevel >= 2) showCard2 = true; 
     if (showCard2) {
         if (card2.style.display !== 'flex') { card2.classList.remove('card-hidden'); card2.style.display = 'flex'; card2.classList.add('fade-in'); }
     } else { card2.style.display = 'none'; card2.classList.add('card-hidden'); }
     
-    // 3심 처리 생략
     const card3 = document.getElementById('card-3');
     if (maxLevel >= 3) {
         card3.classList.remove('card-hidden'); card3.style.display = 'flex';
@@ -107,17 +104,42 @@ function updateNextCardVisibility() {
     }
 }
 
+// [NEW] 비율 파싱 함수 (예: "1/3", "2/3", "100", "50%" 처리)
+function parseRatio(ratioStr) {
+    if(!ratioStr) return 1.0;
+    let s = ratioStr.toString().trim();
+    if(s.includes('/')) {
+        const parts = s.split('/');
+        if(parts.length === 2) {
+            const num = parseFloat(parts[0]);
+            const den = parseFloat(parts[1]);
+            if(den !== 0) return num / den;
+        }
+    }
+    if(s.includes('%')) {
+        return parseFloat(s.replace('%', '')) / 100.0;
+    }
+    const val = parseFloat(s);
+    if(val > 1.0 && val <= 100.0) return val / 100.0; // "100" -> 1.0, "50" -> 0.5
+    if(isNaN(val)) return 1.0;
+    return val;
+}
+
 function calculateAll() {
     const caseType = document.getElementById('caseType').value;
     if (!caseType) return;
     updateNextCardVisibility();
     let partyCount = parseInt(document.getElementById('partyCount').value);
     if(isNaN(partyCount) || partyCount < 2) partyCount = 2; 
+    
     let totalLawyer = 0; let totalScrivener = 0; let totalCourt = 0;
+    // [NEW] 비율 적용된 최종 합계용 변수
+    let grandTotalRecoverable = 0;
 
     for (let i = 1; i <= 3; i++) {
         const cardEl = document.getElementById('card-' + i);
         if (i > 1 && (!cardEl || cardEl.classList.contains('card-hidden') || cardEl.style.display === 'none')) continue; 
+        
         const soga = getNumberValue('soga' + i);
         const startFee = getNumberValue('startFee' + i);
         const successFee = getNumberValue('successFee' + i);
@@ -125,10 +147,16 @@ function calculateAll() {
         const isWithdraw = document.getElementById('withdraw' + i).checked;
         const useScrivener = document.getElementById('useScrivener' + i).checked;
         const isPaper = document.getElementById('isPaper' + i).checked;
+        
         let isPayer = false;
         if (i === 1) isPayer = document.getElementById('isPlaintiff1').checked;
         if (i === 2) isPayer = document.getElementById('isAppellant2').checked;
         if (i === 3) isPayer = document.getElementById('isPetitioner3').checked;
+
+        // [NEW] 비율 가져오기
+        const ratioInput = document.getElementById('ratio' + i);
+        let ratioVal = 1.0;
+        if(ratioInput) ratioVal = parseRatio(ratioInput.value);
 
         let recognizedFee = 0;
         let limit = calcLawyerFeeLimit(soga);
@@ -153,31 +181,40 @@ function calculateAll() {
         document.getElementById('scrivener' + i).innerText = sFee.toLocaleString();
         document.getElementById('stamp' + i).innerText = stamp.toLocaleString();
         document.getElementById('service' + i).innerText = service.toLocaleString();
-        totalLawyer += recognizedFee; totalScrivener += sFee; totalCourt += (stamp + service);
+        
+        // 화면에는 '인정된 전체 금액'을 보여주되, 합계 계산 시에만 비율을 적용
+        totalLawyer += recognizedFee; 
+        totalScrivener += sFee; 
+        totalCourt += (stamp + service);
+
+        // [NEW] 심급별 인정 총액에 비율 적용하여 합산
+        let instanceTotal = recognizedFee + sFee + stamp + service;
+        let instanceRecoverable = Math.floor(instanceTotal * ratioVal);
+        grandTotalRecoverable += instanceRecoverable;
     }
-    const grandTotal = totalLawyer + totalScrivener + totalCourt;
-    document.getElementById('grandTotal').innerText = grandTotal.toLocaleString() + " 원";
+    
+    // [NEW] 최종 합계 표시는 '비율이 적용된 금액'으로 설정
+    document.getElementById('grandTotal').innerText = grandTotalRecoverable.toLocaleString() + " 원";
+    
+    // 하단 상세 내역은 참고용으로 단순 합계 표시 (비율 미적용 상태 유지 - 혼동 방지)
     document.getElementById('totalLawyer').innerText = totalLawyer.toLocaleString();
     document.getElementById('totalScrivener').innerText = totalScrivener.toLocaleString();
     document.getElementById('totalCourt').innerText = totalCourt.toLocaleString();
     
-    checkCalculatorCompletion(); // [중요] 계산 후 버튼 상태 업데이트
+    checkCalculatorCompletion(); 
 }
 
 function checkCalculatorCompletion() {
     const btn = document.getElementById('btnToEvidence');
     let isAnyCardComplete = false;
 
-    // 1,2,3심 중 하나라도 (착수금 && 성공보수 && 소가)가 채워져 있으면 활성화
     for(let i=1; i<=3; i++) {
         const card = document.getElementById('card-' + i);
-        // 카드가 보이고(active)
         if(card && !card.classList.contains('card-hidden') && card.style.display !== 'none') {
             const startVal = document.getElementById('startFee' + i).value;
             const successVal = document.getElementById('successFee' + i).value;
             const sogaVal = document.getElementById('soga' + i).value;
             
-            // 셋 다 비어있지 않다면 OK
             if(startVal !== "" && successVal !== "" && sogaVal !== "") {
                 isAnyCardComplete = true;
                 break; 
@@ -245,13 +282,10 @@ function showContentAndCalculate() {
     const mainContent = document.getElementById('main-calc-content');
     const familyContainer = document.getElementById('family-specific-container');
     
-    // 가사 사건 처리
     if (caseType === 'family') { familyContainer.classList.remove('hidden'); familyContainer.classList.add('fade-in'); } 
     else { familyContainer.classList.add('hidden'); document.getElementById('familySpecificCase').value = ""; currentFamilyCategory = ""; document.getElementById('family-category-display').innerText = ""; }
     
-    // [문구 설정]
-    // 기본값 (민사/가사/행정/특허)
-    let txt1_withdraw = "소취하"; // 일반 소송 기본값
+    let txt1_withdraw = "소취하"; 
     let txt2_title = "2심 (항소심)";
     let txt2_party = "항소인일 경우 체크";
     let txt2_withdraw = "항소취하";
@@ -259,24 +293,19 @@ function showContentAndCalculate() {
     let txt3_party = "상고인일 경우 체크";
     let txt3_withdraw = "상고취하";
 
-    // 민사 신청 사건 (가압류/가처분)일 경우 덮어쓰기
     if (caseType === 'civil_app') {
-         txt1_withdraw = "심문기일 중/후 신청취하"; // 신청 사건은 신청취하
+         txt1_withdraw = "심문기일 중/후 신청취하"; 
          txt2_title = "2심 (항고심)";
          txt2_party = "항고인일 경우 체크";
-         txt2_withdraw = "항고 취하"; // 띄어쓰기 반영
+         txt2_withdraw = "항고 취하"; 
          txt3_title = "3심 (재항고심)";
          txt3_party = "재항고인일 경우 체크";
-         txt3_withdraw = "재항고 취하"; // 띄어쓰기 반영
+         txt3_withdraw = "재항고 취하"; 
     }
 
-    // [DOM 적용]
-    // 중요: HTML 구조가 input + span 형제 관계이므로 형제 선택자(+) 사용
-    // 1심 라벨
     const lblW1 = document.querySelector('#withdraw1 + span');
     if(lblW1) lblW1.innerText = txt1_withdraw;
 
-    // 2심 라벨 및 헤더
     const elInst2 = document.getElementById('txt-inst-2');
     if(elInst2) elInst2.innerText = txt2_title;
     
@@ -286,7 +315,6 @@ function showContentAndCalculate() {
     const lblW2 = document.querySelector('#withdraw2 + span');
     if(lblW2) lblW2.innerText = txt2_withdraw;
 
-    // 3심 라벨 및 헤더
     const elInst3 = document.getElementById('txt-inst-3');
     if(elInst3) elInst3.innerText = txt3_title;
 
@@ -296,7 +324,6 @@ function showContentAndCalculate() {
     const lblW3 = document.querySelector('#withdraw3 + span');
     if(lblW3) lblW3.innerText = txt3_withdraw;
 
-    // 메인 컨텐츠 표시
     if (caseType) { mainContent.classList.remove('hidden'); mainContent.classList.add('fade-in-section'); calculateAll(); }
 }
 

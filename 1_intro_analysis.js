@@ -1,7 +1,7 @@
 /* ==========================================
    1_intro_analysis.js
-   - [FIX] 피신청인 주소 입력 누락 수정
-   - [UPDATE] 불분명한 비용(심급/종류) 사용자 직접 선택 기능 추가
+   - [UPDATE] 프롬프트 강화: 소송비용 부담 비율(Fraction/%) 추출 추가
+   - [MAINTAIN] 기존 기능(심급/비용 추론, 이체내역, 주소 등) 유지
    ========================================== */
 
 // --- 1. 기본 보안 및 초기화 설정 ---
@@ -145,30 +145,40 @@ async function startAnalysis() {
     try {
         let parts = [];
         
-        // 시스템 프롬프트 (파일명이 불분명하면 ambiguousAmounts에 넣도록 유도)
+        // [프롬프트 강화] 비용 부담 비율 추출 지침 추가
         const systemPrompt = `
         너는 유능한 법률 사무원이야. 제공된 법률 문서 이미지(판결문, 이체내역 등)를 분석해서 소송비용확정신청에 필요한 정보를 JSON 포맷으로 추출해줘.
 
         [분석 지침]
-        1. **심급 추론**: 파일명에 '1심', '2심' 등이 있으면 해당 심급으로 처리해라. 만약 **파일명이나 내용만으로 심급(1,2,3심)이나 비용 성격(착수금/성공보수)을 100% 확신할 수 없다면**, 무리하게 할당하지 말고 **'ambiguousAmounts' 리스트에 담아라.** (사용자에게 물어볼 것임)
+        1. **심급 추론**: 파일명에 '1심', '2심', '3심' 등이 있으면 해당 심급으로 처리해라. 불분명하면 'ambiguousAmounts'에 담아라.
            
         2. **당사자 이름과 주소**: 판결문의 원고, 피고 이름과 **주소**를 정확히 찾아라. 주소는 필수다.
         
         3. **판결선고일**: 각 심급 판결문의 '판결선고' 날짜를 찾아라.
         
         4. **소가**: 
-           - 1심: [청구취지] 금액
-           - 2심: [청구취지 및 항소취지] 금액
+           - 1심: [청구취지] 금액. 예비적 청구가 있다면 가장 큰 금액.
+           - 2심: [청구취지 및 항소취지] 금액.
            - 금액은 숫자만 추출.
+
+        5. **법원명 표준화**: '제xx민사부' 등 재판부 정보는 제거하고 공식 법원명만 남겨라.
+
+        6. **소송비용 부담 비율 (중요)**:
+           - 주문(主文)에서 소송비용 부담 비율을 찾아라.
+           - 만약 "소송비용은 피고가 부담한다"라면 비율은 '100'이다.
+           - 만약 "소송비용 중 1/3은 원고가, 나머지는 피고가 부담한다"라고 되어있고, 신청인이 '원고'라면 원고가 받을 돈은 없거나 적으므로 비율을 잘 판단해야 한다. 하지만 여기서는 **상대방(패소자)이 부담해야 할 비율**을 추출해라. 
+           - 예: 원고 승소(피고 전부 부담) -> burdenRatio: "100"
+           - 예: 원고 일부 승소(피고 2/3 부담) -> burdenRatio: "2/3"
+           - 각 심급별로 'burdenRatio1', 'burdenRatio2', 'burdenRatio3'에 문자열로 담아라. (기본값 '100')
 
         [JSON 구조]
         {
           "plaintiffName": "...", "plaintiffAddr": "...",
           "defendantName": "...", "defendantAddr": "...",
           "winnerSide": "...",
-          "courtName1": "...", "caseNo1": "...", "rulingDate1": "...", "startFee1": "...", "successFee1": "...", "soga1": "...",
-          "courtName2": "...", "caseNo2": "...", "rulingDate2": "...", "startFee2": "...", "successFee2": "...",
-          "courtName3": "...", "caseNo3": "...", "rulingDate3": "...", "startFee3": "...", "successFee3": "...",
+          "courtName1": "...", "caseNo1": "...", "rulingDate1": "...", "startFee1": "...", "successFee1": "...", "soga1": "...", "burdenRatio1": "100",
+          "courtName2": "...", "caseNo2": "...", "rulingDate2": "...", "startFee2": "...", "successFee2": "...", "burdenRatio2": "100",
+          "courtName3": "...", "caseNo3": "...", "rulingDate3": "...", "startFee3": "...", "successFee3": "...", "burdenRatio3": "100",
           "ambiguousAmounts": [ {"amount": "금액", "level": "추정심급(없으면 common)"} ]
         }
         반드시 JSON 형식의 텍스트만 응답해.
@@ -238,7 +248,6 @@ function fileToBase64(file) {
 // --- 5. 데이터 검토 및 이체내역 확인 (모달 연동) ---
 
 function startDataReview(data) {
-    // ambiguousAmounts가 있으면 사용자 확인 절차 시작
     if (data.ambiguousAmounts && data.ambiguousAmounts.length > 0) {
         const uniqueFees = [];
         const seen = new Set();
@@ -263,7 +272,6 @@ function startDataReview(data) {
 }
 
 function showFeeReviewModal() {
-    // 모든 검토가 끝나면 당사자 확인으로 이동
     if (feeReviewIndex >= feeReviewQueue.length) {
         document.getElementById('fee-check-modal').classList.add('hidden');
         showApplicantModal(aiExtractedData);
@@ -272,10 +280,8 @@ function showFeeReviewModal() {
 
     const currentItem = feeReviewQueue[feeReviewIndex];
     
-    // 모달에 금액 표시
     document.getElementById('fee-amount-display').innerText = currentItem.amount;
     
-    // [NEW] 라디오 버튼 초기화 (기본값: AI가 추정한 레벨이 있으면 그곳에, 없으면 1심)
     const aiGuessedLevel = (currentItem.level && currentItem.level !== 'common') ? currentItem.level.replace(/[^0-9]/g, '') : '1';
     const radios = document.getElementsByName('feeLevel');
     for(let r of radios) {
@@ -295,7 +301,6 @@ function resolveFee(action) {
     const currentItem = feeReviewQueue[feeReviewIndex];
     const data = aiExtractedData;
     
-    // [NEW] 사용자가 라디오 버튼으로 선택한 심급을 가져옴
     let selectedLevel = '1';
     const radios = document.getElementsByName('feeLevel');
     for(let r of radios) {
@@ -305,7 +310,6 @@ function resolveFee(action) {
         }
     }
 
-    // 선택된 심급에 데이터 저장
     if (action === 'start') {
         data['startFee' + selectedLevel] = currentItem.amount;
     } else if (action === 'success') {
@@ -336,7 +340,6 @@ function selectApplicant(selectionSide) {
 
     let finalAppName = "", finalRespName = "";
     
-    // 선택에 따라 신청인/피신청인 배정
     if (selectionSide === 'plaintiff') { 
         finalAppName = leftName; 
         finalRespName = rightName;
@@ -345,7 +348,6 @@ function selectApplicant(selectionSide) {
         finalRespName = leftName;
     }
 
-    // 신청인(채권자) 정보 입력
     if(finalAppName && !finalAppName.includes("미확인")) setAndTrigger('applicantName', finalAppName);
     
     if (selectionSide === 'plaintiff') {
@@ -354,18 +356,14 @@ function selectApplicant(selectionSide) {
         if (data.defendantAddr) setAndTrigger('applicantAddr', data.defendantAddr);
     }
 
-    // [FIX] 피신청인(채무자) 정보 입력 로직 추가
     if(finalRespName && !finalRespName.includes("미확인")) {
         document.getElementById('step3-area').classList.remove('hidden');
         document.getElementById('btnToCaseInfo').classList.remove('hidden');
         setAndTrigger('respondentName', finalRespName);
         
-        // 피신청인 주소 자동 입력 (여기서 누락되었던 부분)
         if (selectionSide === 'plaintiff') {
-            // 내가 원고라면, 피신청인은 피고이므로 defendantAddr 사용
             if (data.defendantAddr) setAndTrigger('respondentAddr', data.defendantAddr);
         } else {
-            // 내가 피고라면, 피신청인은 원고이므로 plaintiffAddr 사용
             if (data.plaintiffAddr) setAndTrigger('respondentAddr', data.plaintiffAddr);
         }
     }
@@ -385,10 +383,12 @@ function fillRemainingData(data) {
 
     if(data.courtName1) setAndTrigger('courtName1', data.courtName1);
     if(data.caseNo1) setAndTrigger('caseNo1', data.caseNo1);
-    if(data.rulingDate1) setAndTrigger('date1', data.rulingDate1); // ID 매핑 수정 (date1)
+    if(data.rulingDate1) setAndTrigger('date1', data.rulingDate1);
     if(data.soga1) setAndTrigger('soga1', data.soga1);
     if(data.startFee1) setAndTrigger('startFee1', data.startFee1);
     if(data.successFee1) setAndTrigger('successFee1', data.successFee1);
+    // [NEW] 비율 입력
+    if(data.burdenRatio1) setAndTrigger('ratio1', data.burdenRatio1);
 
     if(data.courtName2) setAndTrigger('courtName2', data.courtName2);
     if(data.caseNo2) setAndTrigger('caseNo2', data.caseNo2);
@@ -396,6 +396,8 @@ function fillRemainingData(data) {
     if(data.soga2) setAndTrigger('soga2', data.soga2);
     if(data.startFee2) setAndTrigger('startFee2', data.startFee2);
     if(data.successFee2) setAndTrigger('successFee2', data.successFee2);
+    // [NEW] 비율 입력
+    if(data.burdenRatio2) setAndTrigger('ratio2', data.burdenRatio2);
 
     if(data.courtName3) setAndTrigger('courtName3', data.courtName3);
     else if(data.caseNo3) setAndTrigger('courtName3', '대법원'); 
@@ -404,6 +406,8 @@ function fillRemainingData(data) {
     if(data.rulingDate3) setAndTrigger('date3', data.rulingDate3);
     if(data.startFee3) setAndTrigger('startFee3', data.startFee3);
     if(data.successFee3) setAndTrigger('successFee3', data.successFee3);
+    // [NEW] 비율 입력
+    if(data.burdenRatio3) setAndTrigger('ratio3', data.burdenRatio3);
 }
 
 function setAndTrigger(id, value) {
@@ -413,7 +417,7 @@ function setAndTrigger(id, value) {
         el.classList.add('ai-filled'); 
         el.dispatchEvent(new Event('input', { bubbles: true }));
         el.dispatchEvent(new Event('change', { bubbles: true }));
-        if (id.includes('Fee') || id.includes('soga')) {
+        if (id.includes('Fee') || id.includes('soga') || id.includes('ratio')) {
              el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
         }
     }
@@ -428,7 +432,7 @@ function showManualInput() {
     section.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
-// 이벤트 리스너들 (기존과 동일)
+// 이벤트 리스너들
 const appName = document.getElementById('applicantName');
 const appAddr = document.getElementById('applicantAddr');
 const step2Area = document.getElementById('step2-area');

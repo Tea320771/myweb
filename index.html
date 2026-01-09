@@ -8,7 +8,6 @@
     
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <script>
-        // PDF.js 워커 설정
         pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
     </script>
     
@@ -255,6 +254,10 @@
                             <input type="text" id="soga1" placeholder="금액 입력" onkeyup="formatCurrency(this, 1);">
                             <div class="helper-text" id="korean1">0원</div>
                         </div>
+                        <div class="input-group" style="margin-top:10px; border-top:1px dashed #ddd; padding-top:10px;">
+                            <label style="color:#1d4ed8">상환 받을 비율 (예: 100, 2/3)</label>
+                            <input type="text" id="ratio1" value="100" placeholder="예: 100 또는 2/3" onkeyup="calculateAll()" style="color:#1d4ed8; font-weight:bold;">
+                        </div>
                         <div class="options-container">
                             <label class="check-item opt-court"><input type="checkbox" id="isPlaintiff1" onchange="calculateAll()" checked><span>원고일 경우 체크</span></label>
                             <label class="check-item opt-withdraw hidden" id="opt-before-1" style="color:#b91c1c"><input type="checkbox" id="beforeInterrogation1" onchange="calculateAll()"><span>심문기일 전 신청취하</span></label>
@@ -289,6 +292,10 @@
                             <input type="text" id="soga2" placeholder="금액 입력" onkeyup="formatCurrency(this, 2);">
                             <div class="helper-text" id="korean2">0원</div>
                         </div>
+                        <div class="input-group" style="margin-top:10px; border-top:1px dashed #ddd; padding-top:10px;">
+                            <label style="color:#1d4ed8">상환 받을 비율 (예: 100, 2/3)</label>
+                            <input type="text" id="ratio2" value="100" placeholder="예: 100 또는 2/3" onkeyup="calculateAll()" style="color:#1d4ed8; font-weight:bold;">
+                        </div>
                         <div class="options-container">
                             <label class="check-item opt-court"><input type="checkbox" id="isAppellant2" onchange="calculateAll()"><span>항소인일 경우 체크</span></label>
                             <label class="check-item opt-withdraw hidden" id="opt-before-2" style="color:#b91c1c"><input type="checkbox" id="beforeInterrogation2" onchange="calculateAll()"><span>심문기일 전 취하</span></label>
@@ -322,6 +329,10 @@
                             <label>불복범위 (소가)</label>
                             <input type="text" id="soga3" placeholder="금액 입력" onkeyup="formatCurrency(this, 3);">
                             <div class="helper-text" id="korean3">0원</div>
+                        </div>
+                        <div class="input-group" style="margin-top:10px; border-top:1px dashed #ddd; padding-top:10px;">
+                            <label style="color:#1d4ed8">상환 받을 비율 (예: 100, 2/3)</label>
+                            <input type="text" id="ratio3" value="100" placeholder="예: 100 또는 2/3" onkeyup="calculateAll()" style="color:#1d4ed8; font-weight:bold;">
                         </div>
                         <div class="options-container">
                             <label class="check-item opt-court"><input type="checkbox" id="isPetitioner3" onchange="calculateAll()"><span>상고인일 경우 체크</span></label>
@@ -481,36 +492,7 @@
         </div>
     </div>
 </div>
-<div id="fee-check-modal" class="modal hidden">
-    <div class="modal-content">
-        <div class="modal-header" style="background:var(--color-scrivener);">
-            <h3>비용 성격 확인</h3>
-        </div>
-        <div class="modal-body">
-            <p id="fee-modal-desc" style="font-size: 1.1rem; margin-bottom: 20px; word-break: keep-all;">
-                이체내역에서 금액을 발견했습니다.
-            </p>
-            
-            <div class="fee-display-box" style="background:#f0fdf4; padding:15px; border-radius:8px; margin-bottom:25px; border:1px solid #bbf7d0;">
-                <div style="font-size:0.9rem; color:#166534; margin-bottom:5px;">발견된 금액</div>
-                <div id="fee-amount-display" style="font-size:1.8rem; font-weight:900; color:#15803d;">-</div>
-                <div id="fee-level-display" style="font-size:0.9rem; color:#6b7280; margin-top:5px;">(추정 심급: -)</div>
-            </div>
 
-            <div style="display:flex; flex-direction:column; gap:10px;">
-                <button class="btn-start" onclick="resolveFee('start')" style="margin:0; background:var(--color-lawyer);">
-                    착수금으로 등록
-                </button>
-                <button class="btn-start" onclick="resolveFee('success')" style="margin:0; background:#059669;">
-                    성공보수로 등록
-                </button>
-                <button class="btn-manual-trigger" onclick="resolveFee('skip')" style="width:100%; margin:0;">
-                    건너뛰기 (해당 없음)
-                </button>
-            </div>
-        </div>
-    </div>
-</div>
 <div id="fee-check-modal" class="modal hidden">
     <div class="modal-content" style="max-width: 550px;">
         <div class="modal-header" style="background:var(--color-scrivener);">
@@ -565,7 +547,6 @@
 </div>
 
 <style>
-/* 라디오 버튼을 버튼처럼 보이게 하는 스타일 (style.css에 넣어도 되지만 편의상 여기에 포함) */
 .radio-btn-label { flex: 1; position: relative; }
 .radio-btn-label input { position: absolute; opacity: 0; cursor: pointer; }
 .radio-btn-label span {
