@@ -1,7 +1,8 @@
 /* ==========================================
    1_intro_analysis.js
-   - [UPDATE] 진단 모드 제거 (Gemini 2.0 확정)
-   - [UPDATE] 이체내역 확인을 '예쁜 모달'로 변경 (Sequential UI)
+   - [UPDATE] 진단 모드 제거 및 Gemini 2.0 적용
+   - [UPDATE] 이체내역 확인을 '예쁜 모달'로 변경
+   - [FIX] 에러 메시지 강제 변환 로직 삭제 (원본 에러 표시)
    ========================================== */
 
 // --- 1. 기본 보안 및 초기화 설정 ---
@@ -145,7 +146,7 @@ async function startAnalysis() {
     try {
         let parts = [];
         
-        // 시스템 프롬프트 (기존 유지)
+        // 시스템 프롬프트
         const systemPrompt = `
         너는 유능한 법률 사무원이야. 제공된 법률 문서 이미지들을 분석해서 소송비용확정신청에 필요한 정보를 JSON 포맷으로 추출해줘.
         
@@ -187,7 +188,7 @@ async function startAnalysis() {
 
         logsContainer.innerHTML += `<div class="log-item log-success" style="font-weight:bold;">✨ AI 분석 완료! 결과 확인</div>`;
         
-        // [변경] 바로 모달을 띄우지 않고, 검토 프로세스 시작
+        // 바로 모달을 띄우지 않고, 검토 프로세스 시작
         setTimeout(() => { startDataReview(aiExtractedData); }, 800);
 
     } catch (error) {
@@ -198,8 +199,10 @@ async function startAnalysis() {
     }
 }
 
+// --- [수정된 부분] 백엔드 호출 함수 ---
 async function callBackendFunction(parts) {
     const url = '/api/analyze'; 
+    
     const response = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -207,20 +210,28 @@ async function callBackendFunction(parts) {
     });
 
     if (!response.ok) {
+        // 서버에서 온 에러 데이터를 그대로 받습니다.
         const errorData = await response.json().catch(() => ({}));
-        if (response.status === 429) {
-             throw new Error("요청이 너무 많습니다. 1분만 기다렸다가 다시 시도해주세요.");
-        }
-        throw new Error(`서버 오류 (${response.status})`);
+        
+        // [수정됨] 추측 로직 삭제: 서버가 보내준 error 메시지를 그대로 던집니다.
+        throw new Error(errorData.error || `서버 통신 오류 (${response.status})`);
     }
 
     const result = await response.json();
-    if (!result.candidates || result.candidates.length === 0) throw new Error("분석 결과가 없습니다.");
+    
+    if (!result.candidates || result.candidates.length === 0) {
+        throw new Error("AI 분석 결과가 비어있습니다.");
+    }
 
     let rawText = result.candidates[0].content.parts[0].text;
     rawText = rawText.replace(/```json/g, "").replace(/```/g, "").trim();
     
-    return JSON.parse(rawText);
+    try {
+        return JSON.parse(rawText);
+    } catch (e) {
+        console.error("JSON Parsing Error:", e);
+        throw new Error("AI 응답을 처리하는 데 실패했습니다.");
+    }
 }
 
 function fileToBase64(file) {
