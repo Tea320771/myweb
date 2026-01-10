@@ -1,7 +1,7 @@
 /* ==========================================
    1_intro_analysis.js
-   - [UPDATE] 당사자 개별 식별(Array) 및 선택 로직(1 vs Multi) 구현
-   - [UPDATE] 신청인 1명 고정, 피신청인 다수 선택 시 자동 포맷팅
+   - [UPDATE] 피신청인 개별 입력(동적 카드) UI 로직 구현
+   - [UPDATE] 수동 추가/삭제 및 데이터 동기화(Sync) 기능 추가
    ========================================== */
 
 // --- 1. 기본 보안 및 초기화 설정 ---
@@ -145,7 +145,7 @@ async function startAnalysis() {
     try {
         let parts = [];
         
-        // [프롬프트 강화] 당사자 개별 추출 지침 추가
+        // [프롬프트] 당사자 개별 추출
         const systemPrompt = `
         너는 유능한 법률 사무원이야. 제공된 법률 문서 이미지(판결문, 이체내역 등)를 분석해서 소송비용확정신청에 필요한 정보를 JSON 포맷으로 추출해줘.
 
@@ -273,15 +273,12 @@ function showFeeReviewModal() {
     }
 
     const currentItem = feeReviewQueue[feeReviewIndex];
-    
     document.getElementById('fee-amount-display').innerText = currentItem.amount;
-    
     const aiGuessedLevel = (currentItem.level && currentItem.level !== 'common') ? currentItem.level.replace(/[^0-9]/g, '') : '1';
     const radios = document.getElementsByName('feeLevel');
     for(let r of radios) {
         if(r.value === aiGuessedLevel) r.checked = true;
     }
-    
     document.getElementById('fee-check-modal').classList.remove('hidden');
 }
 
@@ -291,30 +288,22 @@ function resolveFee(action) {
         showFeeReviewModal();
         return;
     }
-
     const currentItem = feeReviewQueue[feeReviewIndex];
     const data = aiExtractedData;
-    
     let selectedLevel = '1';
     const radios = document.getElementsByName('feeLevel');
-    for(let r of radios) {
-        if(r.checked) {
-            selectedLevel = r.value;
-            break;
-        }
-    }
+    for(let r of radios) { if(r.checked) { selectedLevel = r.value; break; } }
 
     if (action === 'start') {
         data['startFee' + selectedLevel] = currentItem.amount;
     } else if (action === 'success') {
         data['successFee' + selectedLevel] = currentItem.amount;
     }
-
     feeReviewIndex++;
     showFeeReviewModal();
 }
 
-// --- 6. 신청인 확인 및 당사자 선택 로직 (대폭 수정) ---
+// --- 6. 신청인 확인 및 당사자 선택 로직 ---
 
 function showApplicantModal(data) {
     const appListContainer = document.getElementById('applicant-list-container');
@@ -328,7 +317,6 @@ function showApplicantModal(data) {
         data.plaintiffs.forEach((p, idx) => {
             const wrapper = document.createElement('div');
             wrapper.style.marginBottom = "8px";
-            // 신청인은 1명만 선택 (Radio)
             wrapper.innerHTML = `
                 <label style="display:flex; align-items:center; cursor:pointer;">
                     <input type="radio" name="selectedApplicant" value='${JSON.stringify({role:'plaintiff', ...p})}' ${idx===0 ? 'checked' : ''} style="margin-right:8px;">
@@ -337,9 +325,8 @@ function showApplicantModal(data) {
                         <div style="font-size:0.8em; color:#666;">${p.addr}</div>
                     </div>
                 </label>`;
-            appListContainer.appendChild(wrapper.cloneNode(true)); // 왼쪽: 신청인 후보
+            appListContainer.appendChild(wrapper.cloneNode(true));
             
-            // 피신청인은 여러 명 선택 (Checkbox)
             const wrapperChk = document.createElement('div');
             wrapperChk.style.marginBottom = "8px";
             wrapperChk.innerHTML = `
@@ -349,7 +336,7 @@ function showApplicantModal(data) {
                         <div style="font-weight:bold;">[원고] ${p.name}</div>
                     </div>
                 </label>`;
-            respListContainer.appendChild(wrapperChk); // 오른쪽: 피신청인 후보
+            respListContainer.appendChild(wrapperChk);
         });
     }
 
@@ -358,7 +345,6 @@ function showApplicantModal(data) {
         data.defendants.forEach((d, idx) => {
             const wrapper = document.createElement('div');
             wrapper.style.marginBottom = "8px";
-            // 신청인 후보
             wrapper.innerHTML = `
                 <label style="display:flex; align-items:center; cursor:pointer;">
                     <input type="radio" name="selectedApplicant" value='${JSON.stringify({role:'defendant', ...d})}' style="margin-right:8px;">
@@ -369,7 +355,6 @@ function showApplicantModal(data) {
                 </label>`;
             appListContainer.appendChild(wrapper);
 
-            // 피신청인 후보 (보통 피고가 피신청인이 됨 -> 기본 체크)
             const wrapperChk = document.createElement('div');
             wrapperChk.style.marginBottom = "8px";
             wrapperChk.innerHTML = `
@@ -410,8 +395,8 @@ function confirmPartySelection() {
         }
     }
 
-    // 자기 자신을 피신청인으로 선택했는지 방지 (간단 체크)
     if(selectedApp) {
+        // 본인을 피신청인에서 제외
         selectedResps = selectedResps.filter(r => r.name !== selectedApp.name);
     }
 
@@ -425,26 +410,100 @@ function confirmPartySelection() {
         document.getElementById('step3-area').classList.remove('hidden');
         document.getElementById('btnToCaseInfo').classList.remove('hidden');
         
-        if (selectedResps.length === 1) {
-            // 1명이면 그냥 입력
-            setAndTrigger('respondentName', selectedResps[0].name);
-            setAndTrigger('respondentAddr', selectedResps[0].addr || "주소 미상");
-        } else {
-            // 여러 명이면 번호 매겨서 입력 (예: 1. 김삼남\n2. 김사남)
-            const names = selectedResps.map((r, i) => `${i+1}. ${r.name}`).join('\n');
-            const addrs = selectedResps.map((r, i) => `${i+1}. ${r.addr || "주소 미상"}`).join('\n');
-            setAndTrigger('respondentName', names);
-            setAndTrigger('respondentAddr', addrs);
-        }
+        // [핵심 변경] 기존 입력칸을 비우고 동적 입력칸 생성
+        const container = document.getElementById('respondent-dynamic-list');
+        container.innerHTML = ""; // 초기화
+        
+        // 선택된 사람 수만큼 입력칸(카드) 생성
+        selectedResps.forEach(r => {
+            addRespondentInput(r.name, r.addr || "주소 미상");
+        });
+    } else {
+        // 선택된 사람이 없으면 빈 칸 1개라도 생성 (수동 입력을 위해)
+        document.getElementById('step3-area').classList.remove('hidden');
+        addRespondentInput(); 
     }
 
     fillRemainingData(aiExtractedData);
     showManualInput();
     
     const countText = selectedResps.length > 0 ? `${selectedResps.length}명` : "0명";
-    alert(`설정 완료!\n신청인: ${selectedApp ? selectedApp.name : '미선택'}\n피신청인: ${countText}`);
+    alert(`설정 완료!\n신청인: ${selectedApp ? selectedApp.name : '미선택'}\n피신청인: ${countText}이 설정되었습니다.`);
 }
 
+// [NEW] 피신청인 동적 입력칸 추가 함수
+function addRespondentInput(nameVal = '', addrVal = '') {
+    const container = document.getElementById('respondent-dynamic-list');
+    const count = container.children.length + 1;
+    
+    const div = document.createElement('div');
+    div.className = 'respondent-row';
+    div.style.cssText = "background:#f9fafb; padding:15px; border:1px solid #e5e7eb; border-radius:8px; margin-bottom:10px; position:relative;";
+    
+    // 삭제 버튼 (2번째 사람부터 표시)
+    const deleteBtn = count > 0 ? `<span onclick="removeRespondentRow(this)" style="color:#ef4444; cursor:pointer; font-size:0.85rem; font-weight:bold;">[삭제]</span>` : '';
+
+    div.innerHTML = `
+        <div style="font-weight:bold; color:#4b5563; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center;">
+            <span>피신청인 <span class="resp-idx">${count}</span></span>
+            ${deleteBtn}
+        </div>
+        <div class="form-group" style="margin-bottom:10px;">
+            <label class="form-label" style="font-size:0.85rem;">이름 <span style="color:red">*</span></label>
+            <input type="text" class="form-input resp-name-input" value="${nameVal}" placeholder="이름 입력" oninput="syncRespondentData()">
+        </div>
+        <div class="form-group" style="margin-bottom:0;">
+            <label class="form-label" style="font-size:0.85rem;">주소 <span style="color:red">*</span></label>
+            <input type="text" class="form-input resp-addr-input" value="${addrVal}" placeholder="주소 입력" oninput="syncRespondentData()">
+        </div>
+    `;
+    container.appendChild(div);
+    syncRespondentData(); // 추가 후 데이터 동기화
+}
+
+// [NEW] 피신청인 행 삭제 함수
+function removeRespondentRow(el) {
+    el.closest('.respondent-row').remove();
+    // 번호 재정렬
+    const rows = document.querySelectorAll('.respondent-row');
+    rows.forEach((row, idx) => {
+        row.querySelector('.resp-idx').innerText = idx + 1;
+    });
+    syncRespondentData();
+}
+
+// [NEW] 동적 입력 데이터를 기존 로직(hidden input)과 동기화
+function syncRespondentData() {
+    const names = [];
+    const addrs = [];
+    const rows = document.querySelectorAll('.respondent-row');
+    
+    rows.forEach((row, idx) => {
+        const nameVal = row.querySelector('.resp-name-input').value.trim();
+        const addrVal = row.querySelector('.resp-addr-input').value.trim();
+        
+        if (rows.length === 1) {
+            names.push(nameVal);
+            addrs.push(addrVal);
+        } else {
+            names.push(`${idx+1}. ${nameVal}`);
+            addrs.push(`${idx+1}. ${addrVal}`);
+        }
+    });
+
+    const finalName = names.join('\n');
+    const finalAddr = addrs.join('\n');
+
+    // 숨겨진 필드에 값 주입 (기존 계산기/미리보기 로직이 이 ID를 참조함)
+    const nameInput = document.getElementById('respondentName');
+    const addrInput = document.getElementById('respondentAddr');
+    
+    if(nameInput) nameInput.value = finalName;
+    if(addrInput) addrInput.value = finalAddr;
+
+    // 다음 단계 버튼 활성화 체크
+    checkStep3();
+}
 
 function fillRemainingData(data) {
     if(data.caseNo2 || data.courtName2 || data.startFee2) {
@@ -479,7 +538,6 @@ function fillRemainingData(data) {
     if(data.successFee3) setAndTrigger('successFee3', data.successFee3);
     if(data.burdenRatio3) setAndTrigger('ratio3', data.burdenRatio3);
 
-    // 총 당사자 수 자동 입력
     if (data.totalPartyCount && data.totalPartyCount > 0) {
         setAndTrigger('partyCount', data.totalPartyCount);
     }
@@ -487,6 +545,9 @@ function fillRemainingData(data) {
 
 function setAndTrigger(id, value) {
     const el = document.getElementById(id);
+    // 피신청인 이름/주소는 동적 생성되므로 여기서 직접 처리하지 않음 (syncRespondentData로 대체됨)
+    if(id === 'respondentName' || id === 'respondentAddr') return; 
+
     if(el && value) {
         el.value = value; 
         el.classList.add('ai-filled'); 
@@ -494,11 +555,6 @@ function setAndTrigger(id, value) {
         el.dispatchEvent(new Event('change', { bubbles: true }));
         if (id.includes('Fee') || id.includes('soga') || id.includes('ratio') || id === 'partyCount') {
              el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
-        }
-        // Textarea 자동 높이 조절 (다수 당사자 입력 시)
-        if (id === 'respondentName' || id === 'respondentAddr') {
-            el.style.height = 'auto';
-            el.style.height = (el.scrollHeight) + 'px';
         }
     }
     if (typeof calculateAll === 'function') calculateAll();
@@ -520,8 +576,6 @@ const repName = document.getElementById('repName');
 const repAddr = document.getElementById('repAddr');
 const noRepCheck = document.getElementById('noRepresentative');
 const step3Area = document.getElementById('step3-area');
-const respName = document.getElementById('respondentName');
-const respAddr = document.getElementById('respondentAddr');
 const btnToCaseInfo = document.getElementById('btnToCaseInfo');
 
 function checkStep1() {
@@ -536,7 +590,15 @@ function checkStep2() {
     const isChecked = noRepCheck.checked;
     const isFilled = (repName.value.trim() !== "" && repAddr.value.trim() !== "");
     if (isChecked || isFilled) {
-        if (step3Area.classList.contains('hidden')) { step3Area.classList.remove('hidden'); step3Area.classList.add('fade-in-section'); }
+        if (step3Area.classList.contains('hidden')) { 
+            step3Area.classList.remove('hidden'); 
+            step3Area.classList.add('fade-in-section'); 
+            // 수동 모드로 진입했을 때 피신청인 입력칸이 하나도 없으면 기본 1개 생성
+            const list = document.getElementById('respondent-dynamic-list');
+            if(list && list.children.length === 0) {
+                addRespondentInput();
+            }
+        }
     }
 }
 if(repName) repName.addEventListener('input', checkStep2);
@@ -555,9 +617,18 @@ function toggleRepInputs(checkbox) {
 }
 
 function checkStep3() {
-    if (respName.value.trim() !== "" && respAddr.value.trim() !== "") {
+    // 동적 필드의 값을 확인
+    const rows = document.querySelectorAll('.respondent-row');
+    let isValid = false;
+    if(rows.length > 0) {
+        const firstRow = rows[0];
+        const name = firstRow.querySelector('.resp-name-input').value.trim();
+        const addr = firstRow.querySelector('.resp-addr-input').value.trim();
+        if(name !== "" && addr !== "") isValid = true;
+    }
+
+    if (isValid) {
         if (btnToCaseInfo.classList.contains('hidden')) { btnToCaseInfo.classList.remove('hidden'); btnToCaseInfo.classList.add('fade-in-section'); }
     }
 }
-if(respName) respName.addEventListener('input', checkStep3);
-if(respAddr) respAddr.addEventListener('input', checkStep3);
+// 동적 이벤트 바인딩은 addRespondentInput 내의 oninput="syncRespondentData()" -> checkStep3() 흐름으로 처리됨

@@ -107,17 +107,25 @@
                 </div>
 
                 <div id="step3-area" class="hidden">
-                    <div class="section-header">3. 피신청인(채무자) 정보</div>
-                    <div class="form-group">
-                        <label class="form-label">피신청인 이름 <span style="color:red">*</span></label>
-                        <input type="text" id="respondentName" class="form-input" placeholder="이름을 입력하세요">
-                    </div>
-                    <div class="form-group">
-                        <label class="form-label">피신청인 주소 <span style="color:red">*</span></label>
-                        <input type="text" id="respondentAddr" class="form-input" placeholder="주소를 입력하세요">
-                    </div>
-                    <button id="btnToCaseInfo" class="btn-start hidden" onclick="goToCaseInfo()">다음 단계로 (사건 정보)</button>
-                </div>
+    <div class="section-header">3. 피신청인(채무자) 정보</div>
+    
+    <p style="font-size:0.9rem; color:#6b7280; margin-bottom:15px;">
+        ※ 피신청인이 여러 명일 경우, 각자의 이름과 주소를 정확히 입력해주세요.
+    </p>
+
+    <div id="respondent-dynamic-list"></div>
+
+    <button type="button" class="btn-manual-trigger" onclick="addRespondentInput()" style="width:100%; margin-top:10px; border-style:dashed; color:var(--color-lawyer); border-color:var(--color-lawyer);">
+        + 피신청인 인원 추가하기
+    </button>
+
+    <input type="hidden" id="respondentName">
+    <input type="hidden" id="respondentAddr">
+
+    <button id="btnToCaseInfo" class="btn-start hidden" onclick="goToCaseInfo()" style="margin-top:20px;">
+        다음 단계로 (사건 정보)
+    </button>
+</div>
             </div>
         </div>
     </div>
