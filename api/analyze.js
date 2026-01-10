@@ -1,4 +1,4 @@
-import { GoogleGenerativeAI, SchemaType } from '@google/generative-ai'; // SchemaType 추가
+import { GoogleGenerativeAI, SchemaType } from '@google/generative-ai';
 
 export const config = {
     maxDuration: 60,
@@ -14,16 +14,15 @@ export default async function handler(req, res) {
         const apiKey = process.env.GEMINI_API_KEY;
         if (!apiKey) return res.status(500).json({ error: 'API Key Missing' });
 
-const genAI = new GoogleGenerativeAI(apiKey);
-        // 최신 모델 사용 권장 (flash 2.0 or 1.5-pro)
+        const genAI = new GoogleGenerativeAI(apiKey);
+        
+        // [수정] 
+        // gemini-flash-latest는 할당량이 매우 적은(20회) 실험적 모델로 연결될 수 있습니다.
+        // 하루 1,500회 무료 사용이 가능한 표준 모델 'gemini-1.5-flash'를 사용해야 합니다.
         const model = genAI.getGenerativeModel({ 
-            // [수정 전] model: "gemini-1.5-flash", 
-            
-            // [수정 후] 아래 모델명 중 하나를 사용하세요. (flash-latest 추천)
-            model: "gemini-flash-latest", 
-            
+            model: "gemini-1.5-flash", 
             generationConfig: {
-                temperature: 0.1, // 정확한 데이터 추출을 위해 낮춤
+                temperature: 0.1,
                 responseMimeType: "application/json" 
             }
         });
