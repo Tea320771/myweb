@@ -1,6 +1,7 @@
 /* ==========================================
    3_calculator.js
    - [FIX] goToCalculator 함수: playTransition 부재 시 안전 처리
+   - [FIX] '소명 자료 입력하기' 버튼(btnToEvidence) 이벤트 리스너 연결 추가
    - [UPDATE] 'AI 가르치기' 기능을 위한 전용 모달(Large Input) 추가
    ========================================== */
 
@@ -10,6 +11,24 @@ let respondentRatioState = {
     2: [], // 2심
     3: []  // 3심
 };
+
+// [FIX] DOM 로드 시 버튼 이벤트 연결 (누락된 부분 추가)
+document.addEventListener('DOMContentLoaded', function() {
+    const btnEvidence = document.getElementById('btnToEvidence');
+    if (btnEvidence) {
+        btnEvidence.addEventListener('click', function() {
+            // 4_evidence.js에 정의된 함수 호출
+            if (typeof goToEvidence === 'function') {
+                goToEvidence();
+            } else {
+                alert("다음 단계(소명 자료)로 이동하는 함수를 찾을 수 없습니다.");
+            }
+        });
+    }
+    
+    // 초기 계산 상태 확인
+    setTimeout(checkCalculatorCompletion, 500);
+});
 
 function goToCalculator() {
     const appName = document.getElementById('applicantName');
