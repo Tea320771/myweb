@@ -3,179 +3,587 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>소송비용액 확정 신청 도우미</title>
-    <link rel="stylesheet" href="style.css">
-    <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css" />
-</head>
-<body>
-    <div class="main-container">
-        <header>
-            <h1>소송비용액 확정 신청 도우미</h1>
-        </header>
+    <title>소송비용액 확정 신청 도우미 (로컴 AI)</title>
+    
+    <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
 
-        <div class="stepper-container">
-            <div class="step active">
-                <div class="step-circle">1</div>
-                <div class="step-label">시작</div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script>
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    </script>
+    
+    <link rel="stylesheet" href="style.css">
+</head>
+<body oncontextmenu="return false" ondragstart="return false" onselectstart="return false">
+
+<div id="intro-overlay">
+    <div class="intro-message">
+        소송비용확정신청서를 작성하기 전, 관련 문서를 올려주시면<br>
+        로컴 AI가 문서를 자동 분석하여 소송비용확정신청서를 자동 작성해드려요.
+    </div>
+</div>
+
+<div id="transition-overlay" class="hidden">
+    <div id="transition-text-content" class="transition-content"></div>
+</div>
+
+<div id="globalBackBtn" class="btn-back-floating" onclick="goBackStep()" title="이전 단계로">
+    <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="19" y1="12" x2="5" y2="12"></line>
+        <polyline points="12 19 5 12 12 5"></polyline>
+    </svg>
+</div>
+
+<div class="container" id="mainContainer">
+
+    <div id="introPage" class="page-section">
+        <div class="intro-card">
+            <div class="intro-title">소송비용액 확정 신청<br>AI 스마트 작성</div>
+            
+            <div class="smart-upload-area" id="smartUploadZone">
+                <div onclick="document.getElementById('docInput').click()" style="cursor: pointer;">
+                    <input type="file" id="docInput" multiple accept="image/*, .png, .jpg, .jpeg, .pdf" style="display:none" onchange="queueFiles(this.files)">
+                    
+                    <div id="upload-content">
+                        <span class="upload-icon">📂</span>
+                        <div class="upload-title">문서 추가하기</div>
+                        <div class="upload-desc">
+                            판결문, 위임계약서(PDF/이미지) 등을<br>
+                            <strong>하나씩 혹은 한꺼번에</strong> 끌어다 놓거나 클릭해서 추가하세요.
+                        </div>
+                    </div>
+                </div>
+
+                <div id="file-queue-list" class="file-queue-container hidden"></div>
+
+                <div id="action-area" class="hidden" style="margin-top: 20px; border-top: 1px dashed #cbd5e1; padding-top: 20px;">
+                    <div style="font-size: 0.9rem; color: #64748b; margin-bottom: 10px;">모든 문서를 추가하셨나요?</div>
+                    <button class="btn-start" onclick="startAnalysis()" style="margin-top: 0; background-color: var(--color-scrivener);">
+                        📄 문서 분석 시작 (OCR)
+                    </button>
+                </div>
+                
+                <div id="processing-logs" class="processing-logs"></div>
             </div>
-            <div class="step-line"></div>
-            <div class="step">
-                <div class="step-circle">2</div>
-                <div class="step-label">사건 정보</div>
+
+            <div style="text-align: center; margin-bottom: 20px;">
+                <button class="btn-manual-trigger" onclick="showManualInput()">
+                    수동으로 작성을 원하세요? 수동 작성하기
+                </button>
             </div>
-            <div class="step-line"></div>
-            <div class="step">
-                <div class="step-circle">3</div>
-                <div class="step-label">비용 계산</div>
+            
+            <div id="manualInputSection" class="hidden">
+                <div id="step1-area">
+                    <div class="section-header">1. 신청인(채권자) 정보</div>
+                    <div class="form-group">
+                        <label class="form-label">신청인 이름 <span style="color:red">*</span></label>
+                        <input type="text" id="applicantName" class="form-input" placeholder="이름을 입력하세요">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">신청인 주소 <span style="color:red">*</span></label>
+                        <input type="text" id="applicantAddr" class="form-input" placeholder="주소를 입력하세요">
+                    </div>
+                </div>
+
+                <div id="step2-area" class="hidden">
+                    <div class="section-header">2. 신청인 소송대리인 정보</div>
+                    <label class="no-rep-check">
+                        <input type="checkbox" id="noRepresentative" onchange="toggleRepInputs(this)">
+                        <span>대리인 없음 (직접 소송)</span>
+                    </label>
+                    <div id="rep-inputs">
+                        <div class="form-group">
+                            <label class="form-label">대리인(법무법인) 이름</label>
+                            <input type="text" id="repName" class="form-input" placeholder="예: 법무법인 조율">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">담당 변호사 (선택)</label>
+                            <input type="text" id="repLawyerName" class="form-input" placeholder="예: 홍길동, 김철수">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">대리인 사무실 주소</label>
+                            <input type="text" id="repAddr" class="form-input" placeholder="주소를 입력하세요">
+                        </div>
+                    </div>
+                </div>
+
+                <div id="step3-area" class="hidden">
+    <div class="section-header">3. 피신청인(채무자) 정보</div>
+    
+    <div style="margin-bottom: 15px; font-size: 0.9rem; color: #6b7280;">
+        ※ 피신청인이 여러 명인 경우, 각자의 이름과 주소를 개별적으로 입력해주세요.
+    </div>
+
+    <div id="respondent-dynamic-list"></div>
+
+    <button type="button" class="btn-manual-trigger" onclick="addRespondentInput()" 
+            style="width:100%; margin-top:10px; border-style:dashed; color:var(--color-lawyer); border-color:var(--color-lawyer);">
+        + 피신청인 인원 추가하기
+    </button>
+
+    <input type="hidden" id="respondentName">
+    <input type="hidden" id="respondentAddr">
+
+    <button id="btnToCaseInfo" class="btn-start hidden" onclick="goToCaseInfo()" style="margin-top:20px;">
+        다음 단계로 (사건 정보)
+    </button>
+</div>
             </div>
-            <div class="step-line"></div>
-            <div class="step">
-                <div class="step-circle">4</div>
-                <div class="step-label">소명 자료</div>
+        </div>
+    </div>
+
+    <div id="caseInfoPage" class="page-section hidden">
+        <div class="intro-card">
+            <div class="intro-title">사건 정보 입력</div>
+            <div style="text-align:center; color:#6b7280; margin-bottom:30px;">
+                판결문(결정문)을 보고 정확히 입력해주세요.
             </div>
-            <div class="step-line"></div>
-            <div class="step">
-                <div class="step-circle">5</div>
-                <div class="step-label">미리보기</div>
+
+            <div id="case-step-1">
+                <div class="section-header">1심(제1심) 사건 정보</div>
+                <div class="form-group">
+                    <label class="form-label">1심 법원명</label>
+                    <div class="autocomplete-wrapper">
+                        <input type="text" id="courtName1" class="form-input" placeholder="예: 서울중앙지방법원" onkeyup="checkCaseInfoStep()" autocomplete="off">
+                        <ul id="suggestionList1" class="suggestion-list"></ul>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">1심 사건번호</label>
+                    <input type="text" id="caseNo1" class="form-input" placeholder="예: 2023가합12345" onkeyup="checkCaseInfoStep()">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">1심 선고일(또는 결정일)</label>
+                    <input type="text" id="date1" class="form-input" placeholder="예: 2024. 6. 12.">
+                </div>
+                <label class="confirm-check">
+                    <input type="checkbox" id="finalized1" onchange="checkCaseInfoStep()">
+                    <span>1심 사건 확정 (체크 시 2심 입력란이 뜨지 않습니다)</span>
+                </label>
+            </div>
+
+            <div id="case-step-2" class="hidden" style="margin-top:30px;">
+                <div class="section-header">2심(항소/항고심) 사건 정보</div>
+                <div class="form-group">
+                    <label class="form-label">2심 법원명</label>
+                    <div class="autocomplete-wrapper">
+                        <input type="text" id="courtName2" class="form-input" placeholder="예: 서울고등법원" onkeyup="checkCaseInfoStep()" autocomplete="off">
+                        <ul id="suggestionList2" class="suggestion-list"></ul>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">2심 사건번호</label>
+                    <input type="text" id="caseNo2" class="form-input" placeholder="예: 2024나12345" onkeyup="checkCaseInfoStep()">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">2심 선고일</label>
+                    <input type="text" id="date2" class="form-input" placeholder="예: 2025. 7. 25.">
+                </div>
+                <label class="confirm-check">
+                    <input type="checkbox" id="finalized2" onchange="checkCaseInfoStep()">
+                    <span>2심 사건 확정 (체크 시 3심 입력란이 뜨지 않습니다)</span>
+                </label>
+            </div>
+
+            <div id="case-step-3" class="hidden" style="margin-top:30px;">
+                <div class="section-header">3심(상고/재항고심) 사건 정보</div>
+                <div class="form-group">
+                    <label class="form-label">3심 법원명</label>
+                    <input type="text" id="courtName3" class="form-input" value="대법원" readonly>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">3심 사건번호</label>
+                    <input type="text" id="caseNo3" class="form-input" placeholder="예: 2025다12345" onkeyup="checkCaseInfoStep()">
+                </div>
+                 <div class="form-group">
+                    <label class="form-label">3심 선고일</label>
+                    <input type="text" id="date3" class="form-input" placeholder="예: 2025. 11. 6.">
+                </div>
+            </div>
+            
+            <div class="form-group" style="margin-top:20px;">
+                <label class="form-label">최종 판결 확정일</label>
+                <input type="text" id="finalDate" class="form-input" placeholder="예: 2025. 11. 6.">
+            </div>
+
+            <button id="btnToCalculator" class="btn-start hidden" onclick="goToCalculator()">소송비용 통합 계산기 이동</button>
+        </div>
+    </div>
+
+    <div id="calcPage" class="page-section hidden">
+        <h1>소송비용 통합 계산기</h1>
+        <div class="top-row-container">
+            <div class="summary-box">
+                <div><strong>신청인:</strong> <span id="dispAppName">-</span><br> (대리인: <span id="dispRepName">-</span>)</div>
+                <div><strong>피신청인:</strong> <span id="dispRespName">-</span></div>
+                <div id="caseSummary" class="case-info-summary"></div>
+            </div>
+            <div class="settings-box">
+                <div class="setting-group" style="width:100%; min-width: 250px;">
+                    <label for="caseType">사건 종류 <span style="color:red">*</span></label>
+                    <select id="caseType" onchange="showContentAndCalculate()">
+                        <option value="" selected disabled>사건 종류를 선택하세요</option>
+                        <option value="civil">민사 (일반)</option>
+                        <option value="civil_app">민사 신청 (가압류/가처분 등)</option>
+                        <option value="family">가사 소송</option>
+                        <option value="admin">행정</option>
+                        <option value="patent">특허</option>
+                    </select>
+                </div>
+                <div id="family-specific-container" class="hidden setting-group" style="width:100%; min-width: 250px; border-left: 3px solid var(--color-lawyer); padding-left: 10px;">
+                    <label for="familySpecificCase">가사 사건명 <span style="color:red">*</span></label>
+                    <select id="familySpecificCase" onchange="handleFamilyCaseChange()">
+                        <option value="" selected disabled>상세 사건을 선택하세요</option>
+                    </select>
+                    <div id="family-category-display" style="font-size: 0.85rem; color: var(--color-lawyer); margin-top: 5px; font-weight: bold;"></div>
+                </div>
+                <div class="setting-group" style="width:100%; min-width: 250px;">
+                    <label for="partyCount">전체 당사자 수 (원고+피고)</label>
+                    <input type="number" id="partyCount" value="2" min="2" onchange="calculateAll()" onkeyup="calculateAll()">
+                </div>
             </div>
         </div>
 
-        <main>
-            <section id="intro-analysis-section">
-                <div class="card-content">
-                    <h2>환영합니다</h2>
-                    <p class="description">판결문(집행권원)을 분석하여 소송비용액 확정 신청 절차를 시작합니다.</p>
-                    <div class="action-group right-align">
-                        <button id="start-btn" class="btn btn-primary">시작하기</button>
+        <div id="main-calc-content" class="hidden">
+            <div class="grid-wrapper">
+                <div class="card" id="card-1">
+                    <div class="card-header">1심 (제1심) <span class="badge">지방법원</span></div>
+                    <div class="fee-inputs-wrapper">
+                        <div class="input-group">
+                            <label style="color:#15803d">지출한 변호사 착수금</label>
+                            <input type="text" id="startFee1" placeholder="금액 입력" onkeyup="formatCurrency(this, 1);">
+                        </div>
+                        <div class="input-group" style="margin-bottom:0">
+                            <label style="color:#15803d">지출한 변호사 성공보수</label>
+                            <input type="text" id="successFee1" placeholder="금액 입력" onkeyup="formatCurrency(this, 1);">
+                        </div>
+                    </div>
+                    <div id="soga-container-1" class="soga-inputs-wrapper">
+                        <div class="input-group">
+                            <label>소송목적의 값 (소가)</label>
+                            <input type="text" id="soga1" placeholder="금액 입력" onkeyup="formatCurrency(this, 1);">
+                            <div class="helper-text" id="korean1">0원</div>
+                        </div>
+                        <div class="input-group" style="margin-top:10px; border-top:1px dashed #ddd; padding-top:10px;">
+                            <label style="color:#1d4ed8">상환 받을 비율 (예: 100, 2/3)</label>
+                            <input type="text" id="ratio1" value="100" placeholder="예: 100 또는 2/3" onkeyup="calculateAll()" style="color:#1d4ed8; font-weight:bold;">
+                        </div>
+                        <div class="options-container">
+                            <label class="check-item opt-court"><input type="checkbox" id="isPlaintiff1" onchange="calculateAll()" checked><span>원고일 경우 체크</span></label>
+                            <label class="check-item opt-withdraw hidden" id="opt-before-1" style="color:#b91c1c"><input type="checkbox" id="beforeInterrogation1" onchange="calculateAll()"><span>심문기일 전 신청취하</span></label>
+                            <label class="check-item opt-withdraw"><input type="checkbox" id="withdraw1" onchange="calculateAll()"><span>심문기일 중/후 신청 취하</span></label>
+                            <label class="check-item opt-scrivener"><input type="checkbox" id="useScrivener1" onchange="calculateAll()"><span>서기료 포함</span></label>
+                            <label class="check-item opt-paper"><input type="checkbox" id="isPaper1" onchange="calculateAll()"><span>종이소송</span></label>
+                        </div>
+                        <div class="result-section">
+                            <div class="result-row" id="row-lawyer-1"><span class="lbl">변호사 보수</span><span class="val lawyer" id="lawyer1">0</span></div>
+                            <div class="result-row" id="row-scrivener-1"><span class="lbl">서기료</span><span class="val scrivener inactive" id="scrivener1">0</span></div>
+                            <div class="result-row" id="row-stamp-1"><span class="lbl">인지대</span><span class="val court" id="stamp1">0</span></div>
+                            <div class="result-row" id="row-service-1"><span class="lbl">송달료</span><span class="val court" id="service1">0</span></div>
+                        </div>
                     </div>
                 </div>
-            </section>
 
-            <section id="case-info-section" class="hidden">
-                 <div class="card-content">
-                    <h2>사건 정보 입력</h2>
-                    <p class="description">신청서 작성을 위해 기본적인 사건 정보를 입력해주세요.</p>
-                    <form id="case-info-form">
-                        <div class="form-group">
-                            <label for="case-number">사건번호 (예: 2023가합12345):</label>
-                            <input type="text" id="case-number" name="case-number" required placeholder="2023가합12345">
+                <div class="card card-hidden" id="card-2">
+                    <div class="card-header"><span id="txt-inst-2">2심 (항소심)</span> <span class="badge">고등/합의부</span></div>
+                    <div class="fee-inputs-wrapper">
+                        <div class="input-group">
+                            <label style="color:#15803d">지출한 변호사 착수금</label>
+                            <input type="text" id="startFee2" placeholder="금액 입력" onkeyup="formatCurrency(this, 2);">
                         </div>
-                        <div class="form-group">
-                            <label for="applicant-name">신청인(채권자) 성명:</label>
-                            <input type="text" id="applicant-name" name="applicant-name" required>
-                        </div>
-                        <div class="form-group">
-                             <label for="respondent-name">피신청인(채무자) 성명:</label>
-                            <input type="text" id="respondent-name" name="respondent-name" required>
-                        </div>
-                        <div class="form-group">
-                            <label for="competent-court">관할 법원:</label>
-                            <input type="text" id="competent-court" name="competent-court" required placeholder="예: 서울중앙지방법원">
-                        </div>
-                         <div class="action-group space-between">
-                            <button type="button" id="prev-to-intro-btn" class="btn btn-secondary">이전 단계</button>
-                            <button type="submit" class="btn btn-primary">다음 단계 (비용 계산)</button>
-                        </div>
-                    </form>
-                </div>
-            </section>
-
-            <section id="calculator-section" class="hidden">
-                 <div class="card-content">
-                    <h2>소송비용 계산</h2>
-                    <p class="description">소가와 당사자 수를 입력하면 예상 비용이 자동으로 계산됩니다.</p>
-                    <form id="calculator-form">
-                        <div class="form-row three-columns">
-                            <div class="form-group">
-                                <label for="claim-amount">소가 (소송목적의 값):</label>
-                                <input type="number" id="claim-amount" name="claim-amount" required placeholder="숫자만 입력 (예: 50000000)">
-                            </div>
-                            <div class="form-group">
-                                <label for="plaintiff-count">원고(신청인) 수:</label>
-                                <input type="number" id="plaintiff-count" name="plaintiff-count" min="1" value="1" required>
-                            </div>
-                            <div class="form-group">
-                                <label for="defendant-count">피고(피신청인) 수:</label>
-                                <input type="number" id="defendant-count" name="defendant-count" min="1" value="1" required>
-                            </div>
-                        </div>
-                        <div class="action-group center-align">
-                            <button type="button" id="calculate-btn" class="btn btn-primary wide-btn">계산하기</button>
-                        </div>
-                    </form>
-
-                    <div id="calculation-results" class="hidden">
-                        <h3>계산 결과 (예상)</h3>
-                        <div class="result-grid">
-                            <div class="result-box">
-                                <span class="result-label">인지대</span>
-                                <span id="stamp-fee" class="result-value">0</span> 원
-                            </div>
-                            <div class="result-box">
-                                <span class="result-label">송달료</span>
-                                <span id="service-fee" class="result-value">0</span> 원
-                            </div>
-                            <div class="result-box highlight">
-                                <span class="result-label">변호사 보수(최대)</span>
-                                <span id="lawyer-fee" class="result-value">0</span> 원
-                            </div>
-                        </div>
-                        <div class="total-result-box">
-                            <span class="total-label">예상 소송비용 합계</span>
-                            <div class="total-value-wrapper">
-                                <span id="total-cost" class="total-value">0</span> 원
-                            </div>
-                        </div>
-                         <div class="action-group space-between end-spacing">
-                             <button type="button" id="prev-to-case-info-btn" class="btn btn-secondary">이전 단계</button>
-                             <button type="button" id="next-to-evidence-btn" class="btn btn-primary">다음 단계 (소명 자료)</button>
+                        <div class="input-group" style="margin-bottom:0">
+                            <label style="color:#15803d">지출한 변호사 성공보수</label>
+                            <input type="text" id="successFee2" placeholder="금액 입력" onkeyup="formatCurrency(this, 2);">
                         </div>
                     </div>
-                 </div>
-            </section>
-
-            <section id="evidence-section" class="hidden">
-                 <div class="card-content">
-                    <h2>소명 자료 제출</h2>
-                    <p class="description">비용 계산의 근거가 되는 영수증 등의 자료를 업로드해주세요.</p>
-                    <div class="placeholder-box">
-                        <p>파일 업로드 영역 (구현 예정)</p>
-                        <p class="small-text">영수증, 납부서 등을 이곳에 끌어다 놓으세요.</p>
-                    </div>
-                     <div class="action-group space-between">
-                        <button type="button" id="prev-to-calculator-btn" class="btn btn-secondary">이전 단계</button>
-                        <button type="button" id="next-to-preview-btn" class="btn btn-primary">다음 단계 (미리보기)</button>
+                    <div id="soga-container-2" class="soga-inputs-wrapper">
+                        <div class="input-group">
+                            <label>불복범위 (소가)</label>
+                            <input type="text" id="soga2" placeholder="금액 입력" onkeyup="formatCurrency(this, 2);">
+                            <div class="helper-text" id="korean2">0원</div>
+                        </div>
+                        <div class="input-group" style="margin-top:10px; border-top:1px dashed #ddd; padding-top:10px;">
+                            <label style="color:#1d4ed8">상환 받을 비율 (예: 100, 2/3)</label>
+                            <input type="text" id="ratio2" value="100" placeholder="예: 100 또는 2/3" onkeyup="calculateAll()" style="color:#1d4ed8; font-weight:bold;">
+                        </div>
+                        <div class="options-container">
+                            <label class="check-item opt-court"><input type="checkbox" id="isAppellant2" onchange="calculateAll()"><span>항소인일 경우 체크</span></label>
+                            <label class="check-item opt-withdraw hidden" id="opt-before-2" style="color:#b91c1c"><input type="checkbox" id="beforeInterrogation2" onchange="calculateAll()"><span>심문기일 전 취하</span></label>
+                            <label class="check-item opt-withdraw"><input type="checkbox" id="withdraw2" onchange="calculateAll()"><span>항소취하</span></label>
+                            <label class="check-item opt-scrivener"><input type="checkbox" id="useScrivener2" onchange="calculateAll()"><span>서기료 포함</span></label>
+                            <label class="check-item opt-paper"><input type="checkbox" id="isPaper2" onchange="calculateAll()"><span>종이소송</span></label>
+                        </div>
+                        <div class="result-section">
+                            <div class="result-row" id="row-lawyer-2"><span class="lbl">변호사 보수</span><span class="val lawyer" id="lawyer2">0</span></div>
+                            <div class="result-row" id="row-scrivener-2"><span class="lbl">서기료</span><span class="val scrivener inactive" id="scrivener2">0</span></div>
+                            <div class="result-row" id="row-stamp-2"><span class="lbl">인지대</span><span class="val court inactive" id="stamp2">0</span></div>
+                            <div class="result-row" id="row-service-2"><span class="lbl">송달료</span><span class="val court inactive" id="service2">0</span></div>
+                        </div>
                     </div>
                 </div>
-            </section>
 
-            <section id="preview-section" class="hidden">
-                 <div class="card-content">
-                    <h2>신청서 미리보기</h2>
-                    <p class="description">작성된 신청서 내용을 확인하고 다운로드하세요.</p>
-                    <div id="application-preview" class="preview-box">
-                        <p class="placeholder-text">신청서 미리보기 화면입니다.</p>
+                <div class="card card-hidden" id="card-3">
+                    <div class="card-header"><span id="txt-inst-3">3심 (상고심)</span> <span class="badge">대법원</span></div>
+                    <div class="fee-inputs-wrapper">
+                        <div class="input-group">
+                            <label style="color:#15803d">지출한 변호사 착수금</label>
+                            <input type="text" id="startFee3" placeholder="금액 입력" onkeyup="formatCurrency(this, 3);">
+                        </div>
+                        <div class="input-group" style="margin-bottom:0">
+                            <label style="color:#15803d">지출한 변호사 성공보수</label>
+                            <input type="text" id="successFee3" placeholder="금액 입력" onkeyup="formatCurrency(this, 3);">
+                        </div>
                     </div>
-                     <div class="action-group space-between">
-                        <button type="button" id="prev-to-evidence-btn" class="btn btn-secondary">이전 단계</button>
-                        <button type="button" id="download-btn" class="btn btn-primary">신청서 다운로드 (PDF)</button>
+                    <div id="soga-container-3" class="soga-inputs-wrapper">
+                        <div class="input-group">
+                            <label>불복범위 (소가)</label>
+                            <input type="text" id="soga3" placeholder="금액 입력" onkeyup="formatCurrency(this, 3);">
+                            <div class="helper-text" id="korean3">0원</div>
+                        </div>
+                        <div class="input-group" style="margin-top:10px; border-top:1px dashed #ddd; padding-top:10px;">
+                            <label style="color:#1d4ed8">상환 받을 비율 (예: 100, 2/3)</label>
+                            <input type="text" id="ratio3" value="100" placeholder="예: 100 또는 2/3" onkeyup="calculateAll()" style="color:#1d4ed8; font-weight:bold;">
+                        </div>
+                        <div class="options-container">
+                            <label class="check-item opt-court"><input type="checkbox" id="isPetitioner3" onchange="calculateAll()"><span>상고인일 경우 체크</span></label>
+                            <label class="check-item opt-withdraw hidden" id="opt-before-3" style="color:#b91c1c"><input type="checkbox" id="beforeInterrogation3" onchange="calculateAll()"><span>심문기일 전 취하</span></label>
+                            <label class="check-item opt-withdraw"><input type="checkbox" id="withdraw3" onchange="calculateAll()"><span>상고취하</span></label>
+                            <label class="check-item opt-scrivener"><input type="checkbox" id="useScrivener3" onchange="calculateAll()"><span>서기료 포함</span></label>
+                            <label class="check-item opt-paper"><input type="checkbox" id="isPaper3" onchange="calculateAll()"><span>종이소송</span></label>
+                        </div>
+                        <div class="result-section">
+                            <div class="result-row" id="row-lawyer-3"><span class="lbl">변호사 보수</span><span class="val lawyer" id="lawyer3">0</span></div>
+                            <div class="result-row" id="row-scrivener-3"><span class="lbl">서기료</span><span class="val scrivener inactive" id="scrivener3">0</span></div>
+                            <div class="result-row" id="row-stamp-3"><span class="lbl">인지대</span><span class="val court inactive" id="stamp3">0</span></div>
+                            <div class="result-row" id="row-service-3"><span class="lbl">송달료</span><span class="val court inactive" id="service3">0</span></div>
+                        </div>
                     </div>
                 </div>
-            </section>
-        </main>
-        <footer>
-            <p>© 2024 소송비용액 확정 신청 도우미. All rights reserved.</p>
-        </footer>
+            </div>
+
+            <div class="total-section">
+                <div class="total-label">총 예상 소송비용 합계</div>
+                <div class="total-amount" id="grandTotal">0원</div>
+                <div class="breakdown">
+                    <div class="bd-item"><div class="dot" style="background:var(--color-lawyer)"></div>변호사: <strong id="totalLawyer">0</strong></div>
+                    <div class="bd-item"><div class="dot" style="background:var(--color-scrivener)"></div>서기료: <strong id="totalScrivener">0</strong></div>
+                    <div class="bd-item"><div class="dot" style="background:var(--color-court)"></div>법원비용: <strong id="totalCourt">0</strong></div>
+                </div>
+            </div>
+            <button id="btnToEvidence" class="btn-start" disabled style="margin-top: 30px;">소명 자료 입력하기</button>
+        </div>
     </div>
 
-    <script src="1_intro_analysis.js"></script>
-    <script src="2_case_info.js"></script>
-    <script src="3_calculator.js"></script>
-    <script src="4_evidence.js"></script>
-    <script src="5_preview.js"></script>
-    <script>
-        // 간단한 네비게이션 로직 예시 (각 모듈 js에서 처리하는 것이 좋음)
-        // 현재는 각 js 파일에서 이벤트 리스너를 등록하여 처리하고 있다고 가정.
-    </script>
+    <div id="evidencePage" class="page-section hidden">
+        <div class="intro-card" style="max-width: 800px;">
+            <div class="intro-title">소명 자료 선택</div>
+            <div class="evidence-container">
+                <div class="evidence-group">
+                    <div class="evidence-group-title">공통 / 기본 서류</div>
+                    <div class="evidence-list">
+                        <label class="evidence-item"><input type="checkbox" value="소송비용계산서" checked disabled><span>소송비용계산서</span></label>
+                        <label class="evidence-item"><input type="checkbox" value="소송위임장"><span>소송위임장</span></label>
+                        <label class="evidence-item"><input type="checkbox" value="서기료 영수증"><span>서기료 영수증</span></label>
+                    </div>
+                </div>
+                <div class="evidence-group" id="ev-group-1">
+                    <div class="evidence-group-title">1심 관련</div>
+                    <div class="evidence-list">
+                        <label class="evidence-item"><input type="checkbox" value="1심 사건 위임 계약서"><span>1심 사건 위임 계약서</span></label>
+                        <label class="evidence-item"><input type="checkbox" value="1심 변호사 착수금 이체내역"><span>1심 변호사 착수금 이체내역</span></label>
+                        <label class="evidence-item"><input type="checkbox" value="1심 변호사 성공보수 이체내역"><span>1심 변호사 성공보수 이체내역</span></label>
+                        <label class="evidence-item"><input type="checkbox" value="1심 판결문 정본" checked><span>1심 판결문 정본 (필수)</span></label>
+                        <label class="evidence-item"><input type="checkbox" value="1심 송달 및 확정증명서"><span>1심 송달 및 확정증명서</span></label>
+                    </div>
+                </div>
+                <div class="evidence-group hidden" id="ev-group-2">
+                    <div class="evidence-group-title">2심 관련</div>
+                    <div class="evidence-list">
+                         <label class="evidence-item"><input type="checkbox" value="2심 사건 위임 계약서"><span>2심 사건 위임 계약서</span></label>
+                         <label class="evidence-item"><input type="checkbox" value="2심 판결문 정본" checked><span>2심 판결문 정본</span></label>
+                    </div>
+                </div>
+                 <div class="evidence-group hidden" id="ev-group-3">
+                    <div class="evidence-group-title">3심 관련</div>
+                    <div class="evidence-list">
+                         <label class="evidence-item"><input type="checkbox" value="3심 판결문 정본" checked><span>3심 판결문 정본</span></label>
+                    </div>
+                </div>
+            </div>
+            <button id="btnToPreview" class="btn-start">소송비용확정신청서 및<br>소송비용계산서 미리보기</button>
+        </div>
+    </div>
+
+    <div id="previewPage" class="page-section hidden">
+        <div class="doc-preview">
+            <div class="party-box">
+                <div class="party-label">신 청 인</div>
+                <div class="party-content" id="prev-appName">홍길동</div>
+                <div class="party-content" id="prev-appAddr">주소...</div>
+                <div id="prev-rep-box" style="margin-top:10px;">
+                    <div class="party-content">신청인의 소송대리인 <span id="prev-lawFirm"></span></div>
+                    <div class="agent-content">담당변호사 <span id="prev-lawyerName"></span></div>
+                    <div class="agent-content" id="prev-repAddr"></div>
+                </div>
+            </div>
+            <div class="party-box" style="margin-top:30px;">
+                <div class="party-label">피 신 청 인</div>
+                <div class="party-content" id="prev-respName"></div>
+                <div class="party-content" id="prev-respAddr"></div>
+            </div>
+            <div class="doc-header-title">소송비용확정신청서</div>
+            <div class="doc-section-title">신 청 취 지</div>
+            <div class="doc-text">
+                1. 위 당사자 사이의 <span id="prev-judgements"></span>에 따라 피신청인이 상환하여야 할 소송비용액은 금 <span id="prev-totalAmount" style="font-weight:bold">0</span>원임을 확정한다
+            </div>
+            <div class="doc-text">라는 결정을 구합니다.</div>
+            <div class="doc-section-title">신 청 이 유</div>
+            <div class="doc-text">
+                위 당사자 사이의 <span id="prev-final-judgement"></span>이 <span id="prev-finalDate"></span>자로 확정되었으므로, 별지 비용 계산서 및 소명자료를 첨부하여 신청합니다.
+            </div>
+            <div class="doc-section-title" style="text-align: left; margin-left: 20px;">첨 부 서 류</div>
+            <div class="doc-list" id="prev-evidenceList"></div>
+            <div class="doc-footer-date" id="prev-date"></div>
+            <div class="doc-footer-court"><span id="prev-courtName"></span> 귀중</div>
+            <div class="doc-signature">
+                신청인의 소송대리인<br>
+                <span id="prev-signFirm"></span><br>
+                <span style="display:inline-block; margin-top:5px;">담당변호사 <span id="prev-signLawyer"></span> (인)</span>
+            </div>
+        </div>
+        <div class="page-break"></div>
+        <div class="doc-preview">
+            <div style="font-size: 14pt; margin-bottom: 20px;">[별지]</div>
+            <div class="calc-header">소송비용계산서</div>
+            <div class="calc-info-line">1. 신청인 : 원고 (상소인)</div>
+            <div class="calc-info-line">2. 소가 : <span id="prev-calc-soga"></span>원 (최종심 기준)</div>
+            <div class="calc-info-line">3. 신청인이 지출한 소송비용</div>
+            <table class="calc-table">
+                <colgroup><col style="width: 12%;"><col style="width: 18%;"><col style="width: 20%;"><col style="width: 50%;"></colgroup>
+                <thead><tr><th>심급</th><th>비목</th><th>비용액</th><th>비고 (계산 근거)</th></tr></thead>
+                <tbody id="calcTableBody"></tbody>
+            </table>
+        </div>
+        <div class="preview-actions" style="margin-top:20px;">
+            <button class="btn-start" onclick="window.print()" style="width:auto; padding:10px 20px;">인쇄 / PDF 저장</button>
+        </div>
+    </div>
+</div>
+
+<script src="1_intro_analysis.js"></script>
+<script src="2_case_info.js"></script>
+<script src="3_calculator.js"></script>
+<script src="4_evidence.js"></script>
+<script src="5_preview.js"></script>
+
+<div id="applicant-selection-modal" class="modal hidden">
+    <div class="modal-content" style="max-width: 600px;">
+        <div class="modal-header">
+            <h3>당사자 확정 및 역할 지정</h3>
+        </div>
+        <div class="modal-body">
+            <p id="modal-desc" style="margin-bottom:10px; color:#4b5563;">
+                판결문에서 분석된 당사자 목록입니다.<br>
+                <strong>누가 신청하고, 누구에게 청구할지</strong> 선택해주세요.
+            </p>
+
+            <button onclick="openFeedbackModal(aiExtractedData.costRulingText || '주문 내용 없음')" 
+                    style="margin-bottom: 20px; background:#ef4444; color:white; border:none; padding:8px 15px; border-radius:4px; font-size:0.85rem; cursor:pointer; font-weight:bold; display:flex; align-items:center; gap:5px;">
+                🚨 분석 결과가 이상한가요? (AI 가르치기)
+            </button>
+            
+            <div style="display:flex; gap:20px; text-align:left;">
+                <div style="flex:1; background:#f9fafb; padding:15px; border-radius:8px; border:1px solid #e5e7eb;">
+                    <div style="font-weight:bold; color:var(--color-lawyer); margin-bottom:10px; border-bottom:2px solid var(--color-lawyer); padding-bottom:5px;">
+                        신청인 (받을 사람 1명)
+                    </div>
+                    <div id="applicant-list-container" style="max-height:200px; overflow-y:auto;">
+                        </div>
+                </div>
+
+                <div style="flex:1; background:#f9fafb; padding:15px; border-radius:8px; border:1px solid #e5e7eb;">
+                    <div style="font-weight:bold; color:#dc2626; margin-bottom:10px; border-bottom:2px solid #dc2626; padding-bottom:5px;">
+                        피신청인 (줄 사람)
+                    </div>
+                    <div id="respondent-list-container" style="max-height:200px; overflow-y:auto;">
+                        </div>
+                </div>
+            </div>
+
+            <div style="margin-top:20px; font-size:0.9rem; color:#6b7280;">
+                ※ 피신청인이 여러 명일 경우 자동으로 번호를 매겨 입력됩니다.
+            </div>
+
+            <button class="btn-start" onclick="confirmPartySelection()" style="margin-top: 20px;">
+                선택 완료 및 적용
+            </button>
+        </div>
+    </div>
+</div>
+
+<div id="fee-check-modal" class="modal hidden">
+    <div class="modal-content" style="max-width: 550px;">
+        <div class="modal-header" style="background:var(--color-scrivener);">
+            <h3>비용 정보 확인이 필요해요</h3>
+        </div>
+        <div class="modal-body">
+            <p id="fee-modal-desc" style="font-size: 1.05rem; margin-bottom: 20px; color:#374151; word-break: keep-all;">
+                AI가 이체내역을 발견했지만, 정확한 용도를 파악하기 어렵습니다.<br>
+                아래 내용을 직접 선택해주세요.
+            </p>
+            
+            <div class="fee-display-box" style="background:#f0fdf4; padding:15px; border-radius:8px; margin-bottom:25px; border:1px solid #bbf7d0;">
+                <div style="font-size:0.9rem; color:#166534; margin-bottom:5px;">발견된 금액</div>
+                <div id="fee-amount-display" style="font-size:2rem; font-weight:900; color:#15803d;">-</div>
+            </div>
+
+            <div style="margin-bottom: 20px; text-align: left;">
+                <div style="font-weight:bold; color:#4b5563; margin-bottom:8px;">1. 어느 심급의 비용인가요?</div>
+                <div style="display:flex; gap:10px;">
+                    <label class="radio-btn-label">
+                        <input type="radio" name="feeLevel" value="1" checked>
+                        <span>1심</span>
+                    </label>
+                    <label class="radio-btn-label">
+                        <input type="radio" name="feeLevel" value="2">
+                        <span>2심</span>
+                    </label>
+                    <label class="radio-btn-label">
+                        <input type="radio" name="feeLevel" value="3">
+                        <span>3심</span>
+                    </label>
+                </div>
+            </div>
+
+            <div style="text-align: left;">
+                <div style="font-weight:bold; color:#4b5563; margin-bottom:8px;">2. 어떤 명목인가요?</div>
+                <div style="display:flex; gap:10px;">
+                    <button class="btn-start" onclick="resolveFee('start')" style="margin:0; flex:1; background:var(--color-lawyer);">
+                        변호사 착수금
+                    </button>
+                    <button class="btn-start" onclick="resolveFee('success')" style="margin:0; flex:1; background:#059669;">
+                        변호사 성공보수
+                    </button>
+                </div>
+            </div>
+
+            <button class="btn-manual-trigger" onclick="resolveFee('skip')" style="width:100%; margin-top:20px;">
+                해당 없음 (건너뛰기)
+            </button>
+        </div>
+    </div>
+</div>
+
+<style>
+.radio-btn-label { flex: 1; position: relative; }
+.radio-btn-label input { position: absolute; opacity: 0; cursor: pointer; }
+.radio-btn-label span {
+    display: block; text-align: center; padding: 12px; border: 2px solid #e5e7eb;
+    border-radius: 8px; color: #6b7280; font-weight: bold; cursor: pointer; transition: all 0.2s;
+}
+.radio-btn-label input:checked + span {
+    border-color: var(--color-lawyer); background-color: #eff6ff; color: var(--color-lawyer);
+}
+</style>
 </body>
 </html>
