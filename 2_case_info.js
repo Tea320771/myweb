@@ -1,12 +1,32 @@
 /* ==========================================
    2_case_info.js
-   - 사건 정보 입력 페이지 로직
-   - 법원명 자동완성 및 데이터
+   - [UPDATE] AI 자동 입력(setAndTrigger) 호환성 강화
+   - [UPDATE] 입력 값 변경 시 즉시 버튼 활성화 체크
    ========================================== */
 
 window.addEventListener('DOMContentLoaded', function() {
     setupAutocomplete("courtName1", "suggestionList1");
     setupAutocomplete("courtName2", "suggestionList2");
+
+    // [NEW] 모든 사건 정보 입력 필드에 감지 리스너 추가 (AI 자동 입력 대응)
+    const caseInputs = [
+        'courtName1', 'caseNo1', 'date1', 'finalized1',
+        'courtName2', 'caseNo2', 'date2', 'finalized2',
+        'courtName3', 'caseNo3', 'date3', 'finalDate'
+    ];
+
+    caseInputs.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+            // 키보드 입력, 값 변경, 붙여넣기 등 모든 상황 감지
+            el.addEventListener('input', checkCaseInfoStep);
+            el.addEventListener('change', checkCaseInfoStep);
+            el.addEventListener('keyup', checkCaseInfoStep);
+        }
+    });
+
+    // 페이지 로드 시, 이미 값이 채워져 있을 경우를 대비해 한 번 체크
+    setTimeout(checkCaseInfoStep, 500);
 });
 
 function goToCaseInfo() {
@@ -15,35 +35,71 @@ function goToCaseInfo() {
         const casePage = document.getElementById('caseInfoPage');
         casePage.classList.remove('hidden'); casePage.classList.add('fade-in-section');
         window.scrollTo({ top: 0, behavior: 'smooth' });
+        
+        // [NEW] 페이지 진입 시 다시 한 번 버튼 상태 체크
+        checkCaseInfoStep();
         updateBackButtonVisibility(); 
     });
 }
 
 function checkCaseInfoStep() {
+    // 1심 체크
     const court1 = document.getElementById('courtName1').value.trim();
     const caseNo1 = document.getElementById('caseNo1').value.trim();
     const finalized1 = document.getElementById('finalized1').checked;
+    
     const step2Div = document.getElementById('case-step-2');
     const step3Div = document.getElementById('case-step-3');
     const btnCalc = document.getElementById('btnToCalculator');
+
     const step1Valid = (court1 !== "" && caseNo1 !== "");
 
+    // 1심 완료 & 미확정 -> 2심 표시
     if (step1Valid && !finalized1) {
-        if (step2Div.classList.contains('hidden')) { step2Div.classList.remove('hidden'); step2Div.classList.add('fade-in-section'); }
-    } else { step2Div.classList.add('hidden'); step3Div.classList.add('hidden'); }
+        if (step2Div.classList.contains('hidden')) { 
+            step2Div.classList.remove('hidden'); 
+            step2Div.classList.add('fade-in-section'); 
+        }
+    } else { 
+        step2Div.classList.add('hidden'); 
+        step3Div.classList.add('hidden'); 
+    }
 
+    // 2심 체크
     const court2 = document.getElementById('courtName2').value.trim();
     const caseNo2 = document.getElementById('caseNo2').value.trim();
     const finalized2 = document.getElementById('finalized2').checked;
     
+    // 2심 표시 중 & 2심 완료 & 미확정 -> 3심 표시
     if (!step2Div.classList.contains('hidden') && court2 !== "" && caseNo2 !== "" && !finalized2) {
-         if (step3Div.classList.contains('hidden')) { step3Div.classList.remove('hidden'); step3Div.classList.add('fade-in-section'); }
-    } else { step3Div.classList.add('hidden'); }
+         if (step3Div.classList.contains('hidden')) { 
+             step3Div.classList.remove('hidden'); 
+             step3Div.classList.add('fade-in-section'); 
+         }
+    } else { 
+        step3Div.classList.add('hidden'); 
+    }
 
+    // 최종 버튼 표시 조건
     const caseNo3 = document.getElementById('caseNo3').value.trim();
-    if ((step1Valid && finalized1) || (step1Valid && !finalized1 && court2 && caseNo2 && finalized2) || (step1Valid && !finalized1 && court2 && caseNo2 && !finalized2 && caseNo3)) {
-        if (btnCalc.classList.contains('hidden')) { btnCalc.classList.remove('hidden'); btnCalc.classList.add('fade-in-section'); }
-    } else { btnCalc.classList.add('hidden'); }
+    
+    let isReady = false;
+    
+    // Case A: 1심에서 확정
+    if (step1Valid && finalized1) isReady = true;
+    // Case B: 2심에서 확정
+    else if (step1Valid && !finalized1 && court2 && caseNo2 && finalized2) isReady = true;
+    // Case C: 3심 진행
+    else if (step1Valid && !finalized1 && court2 && caseNo2 && !finalized2 && caseNo3) isReady = true;
+
+    if (isReady) {
+        if (btnCalc.classList.contains('hidden')) { 
+            btnCalc.classList.remove('hidden'); 
+            btnCalc.classList.add('fade-in-section'); 
+        }
+    } else { 
+        btnCalc.classList.add('hidden'); 
+    }
 }
 
 function getMaxInstanceLevel() {
@@ -58,18 +114,37 @@ function setupAutocomplete(inputId, listId) {
     const input = document.getElementById(inputId);
     const list = document.getElementById(listId);
     if (!input || !list) return;
+    
     input.addEventListener("input", function() {
-        const val = this.value; closeList(); if (!val) return;
+        const val = this.value; 
+        closeList(); 
+        if (!val) return;
         const matches = courtList.filter(court => court.includes(val));
         if (matches.length === 0) return;
+        
         matches.forEach(match => {
-            const item = document.createElement("li"); item.className = "suggestion-item";
-            const regex = new RegExp(`(${val})`, "gi"); item.innerHTML = match.replace(regex, "<strong>$1</strong>");
-            item.addEventListener("click", function() { input.value = match; closeList(); checkCaseInfoStep(); });
+            const item = document.createElement("li"); 
+            item.className = "suggestion-item";
+            const regex = new RegExp(`(${val})`, "gi"); 
+            item.innerHTML = match.replace(regex, "<strong>$1</strong>");
+            item.addEventListener("click", function() { 
+                input.value = match; 
+                closeList(); 
+                checkCaseInfoStep(); // [Check] 선택 시 검증 실행
+            });
             list.appendChild(item);
         });
-        input.classList.add("input-with-list"); list.style.display = "block";
+        input.classList.add("input-with-list"); 
+        list.style.display = "block";
     });
-    function closeList() { list.innerHTML = ""; list.style.display = "none"; input.classList.remove("input-with-list"); }
-    document.addEventListener("click", function(e) { if (e.target !== input && e.target !== list) { closeList(); } });
+
+    function closeList() { 
+        list.innerHTML = ""; 
+        list.style.display = "none"; 
+        input.classList.remove("input-with-list"); 
+    }
+
+    document.addEventListener("click", function(e) { 
+        if (e.target !== input && e.target !== list) { closeList(); } 
+    });
 }
