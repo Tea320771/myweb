@@ -20,7 +20,7 @@ export default async function handler(req, res) {
         // gemini-flash-latest는 할당량이 매우 적은(20회) 실험적 모델로 연결될 수 있습니다.
         // 하루 1,500회 무료 사용이 가능한 표준 모델 'gemini-1.5-flash'를 사용해야 합니다.
         const model = genAI.getGenerativeModel({ 
-            model: "gemini-1.5-flash", 
+            model: "gemini-1.5-flash-002", 
             generationConfig: {
                 temperature: 0.1,
                 responseMimeType: "application/json" 
