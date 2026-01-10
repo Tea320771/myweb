@@ -145,7 +145,7 @@ async function startAnalysis() {
     try {
         let parts = [];
         
-        const systemPrompt = `
+const systemPrompt = `
         너는 유능한 법률 사무원이야. 제공된 법률 문서 이미지(판결문, 이체내역 등)를 분석해서 소송비용확정신청에 필요한 정보를 JSON 포맷으로 추출해줘.
 
         [분석 지침]
@@ -162,16 +162,33 @@ async function startAnalysis() {
         
         5. **법원명 표준화**: '제xx민사부' 등은 제거해라.
 
-        6. **소송비용 부담 비율**: 주문을 보고 패소자가 부담할 비율(문자열)을 추출해라.
+        6. **소송비용 부담 비율 및 주문 텍스트 (상세 분석)**: 
+           - 주문을 보고 패소자가 부담할 비율(문자열)을 'burdenRatio'에 추출해라.
+           - **[추가]** 소송비용 부담에 관한 **주문 문장 전체**를 'costRulingText'에 담아라.
+           - **[추가]** 피고(피신청인)가 여러 명일 경우, 주문을 해석하여 각 피고별 **'내부 분담 비율(internalShare, 숫자)'**과 **'신청인에게 상환해야 할 비율(reimburseRatio, 문자열)'**을 분석해 'costBurdenDetails' 배열에 담아라.
+           - (예: "피고 A는 50% 부담, 피고 B는 나머지" -> A: internal 50, B: internal 50)
 
         [JSON 구조]
         {
           "plaintiffs": [ { "name": "김갑동", "addr": "서울..." }, { "name": "이을녀", "addr": "..." } ],
           "defendants": [ { "name": "김삼남", "addr": "..." }, ... ],
           "totalPartyCount": 5, 
-          "courtName1": "...", "caseNo1": "...", "rulingDate1": "...", "startFee1": "...", "successFee1": "...", "soga1": "...", "burdenRatio1": "100",
-          "courtName2": "...", "caseNo2": "...", "rulingDate2": "...", "startFee2": "...", "successFee2": "...", "burdenRatio2": "100",
-          "courtName3": "...", "caseNo3": "...", "rulingDate3": "...", "startFee3": "...", "successFee3": "...", "burdenRatio3": "100",
+          
+          "courtName1": "...", "caseNo1": "...", "rulingDate1": "...", "startFee1": "...", "successFee1": "...", "soga1": "...", 
+          "burdenRatio1": "100", 
+          "costRulingText1": "소송비용 중 원고와 피고 김삼남 사이에 생긴 부분은...", 
+          "costBurdenDetails1": [ { "name": "김삼남", "internalShare": 75, "reimburseRatio": "3/4" } ],
+
+          "courtName2": "...", "caseNo2": "...", "rulingDate2": "...", "startFee2": "...", "successFee2": "...", 
+          "burdenRatio2": "100",
+          "costRulingText2": "...",
+          "costBurdenDetails2": [],
+
+          "courtName3": "...", "caseNo3": "...", "rulingDate3": "...", "startFee3": "...", "successFee3": "...", 
+          "burdenRatio3": "100",
+          "costRulingText3": "...",
+          "costBurdenDetails3": [],
+
           "ambiguousAmounts": [ {"amount": "금액", "level": "추정심급"} ]
         }
         반드시 JSON 형식의 텍스트만 응답해.
@@ -369,10 +386,20 @@ function confirmPartySelection() {
         addRespondentInput(); // 최소 1개는 생성
     }
 
-    fillRemainingData(aiExtractedData);
+fillRemainingData(aiExtractedData);
+    
+    // [추가] AI가 분석한 '주문 텍스트'와 '피신청인별 상세 비율'을 계산기 페이지로 전달
+    if (typeof applyAIAnalysisToCalculator === 'function') {
+        // UI가 그려질 시간을 확보하기 위해 약간의 지연 후 실행
+        setTimeout(() => {
+            applyAIAnalysisToCalculator(aiExtractedData);
+        }, 200);
+    }
+
     showManualInput();
     
     const countText = selectedResps.length > 0 ? `${selectedResps.length}명` : "0명";
+    // ... (이후 alert 등 기존 코드 유지)
     alert(`설정 완료!\n신청인: ${selectedApp ? selectedApp.name : '미선택'}\n피신청인: ${countText}이 설정되었습니다.`);
 }
 

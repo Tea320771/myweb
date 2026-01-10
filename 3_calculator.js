@@ -545,4 +545,188 @@ function showContentAndCalculate() {
     const lblW3 = document.querySelector('#withdraw3 + span'); if(lblW3) lblW3.innerText = txt3_withdraw;
 
     if (caseType) { mainContent.classList.remove('hidden'); mainContent.classList.add('fade-in-section'); calculateAll(); }
+/* ==========================================
+   [추가됨] AI 데이터 연동 및 동적 비율 UI 관리 로직
+   ========================================== */
+
+// 1. 피신청인 이름 목록 가져오기
+function getRespondentNames() {
+    const nameVal = document.getElementById('respondentName').value;
+    if (!nameVal) return ["피신청인"];
+    return nameVal.split('\n').filter(l => l.trim() !== "").map(l => l.replace(/^\d+[\.\)]\s*/, '').trim());
+}
+
+// 2. AI 분석 데이터 적용 (1_intro_analysis.js에서 호출)
+function applyAIAnalysisToCalculator(data) {
+    initRatioUIs(); // UI 강제 생성
+
+    for (let i = 1; i <= 3; i++) {
+        const rulingText = data['costRulingText' + i]; // 프롬프트에서 요청한 필드명
+        const details = data['costBurdenDetails' + i]; // 프롬프트에서 요청한 배열
+
+        if (rulingText) {
+            const textArea = document.getElementById(`rulingText${i}`);
+            if (textArea) textArea.value = rulingText;
+        }
+
+        if (details && Array.isArray(details)) {
+            const currentNames = getRespondentNames();
+            currentNames.forEach((name, idx) => {
+                // 이름 매칭 (부분 일치)
+                const matchedItem = details.find(d => name.includes(d.name) || d.name.includes(name));
+                if (matchedItem) {
+                    if (matchedItem.internalShare !== undefined) syncSliderInput(i, idx, matchedItem.internalShare);
+                    if (matchedItem.reimburseRatio !== undefined) document.getElementById(`ext-${i}-${idx}`).value = matchedItem.reimburseRatio;
+                }
+            });
+        }
+    }
+    calculateAll();
+}
+
+// 3. 비율 UI 생성 (슬라이더 + 입력창 + 텍스트영역)
+function initRatioUIs() {
+    for (let i = 1; i <= 3; i++) createRatioUIForCard(i);
+}
+
+function createRatioUIForCard(instanceIdx) {
+    const card = document.getElementById('card-' + instanceIdx);
+    if (!card) return;
+
+    // 기존 비율 입력칸 숨김 (중복 방지)
+    const oldRatioDiv = document.getElementById('ratio' + instanceIdx)?.closest('.input-group');
+    if(oldRatioDiv) oldRatioDiv.style.display = 'none';
+
+    let container = document.getElementById(`ratio-settings-container-${instanceIdx}`);
+    if (!container) {
+        container = document.createElement('div');
+        container.id = `ratio-settings-container-${instanceIdx}`;
+        container.style.marginTop = "15px";
+        container.style.padding = "10px";
+        container.style.border = "1px solid #e5e7eb";
+        container.style.borderRadius = "8px";
+        container.style.backgroundColor = "#fff";
+
+        // 소가 입력칸 아래에 삽입
+        const sogaContainer = document.getElementById(`soga-container-${instanceIdx}`);
+        const optionsContainer = sogaContainer.querySelector('.options-container');
+        sogaContainer.insertBefore(container, optionsContainer);
+    } else {
+        if(container.innerHTML.trim() !== "") return; // 이미 있으면 패스
+    }
+
+    const names = getRespondentNames();
+    const count = names.length;
+
+    let html = `
+        <div style="margin-bottom:10px;">
+            <label style="font-weight:bold; color:#1d4ed8; font-size:0.9rem;">피신청인별 분담 비율 설정 (주문 반영)</label>
+            <textarea id="rulingText${instanceIdx}" class="form-input" rows="2" 
+                placeholder="여기에 판결문 주문(비용 부분)이 들어갑니다. 수정 후 아래 버튼을 누르세요."
+                style="font-size:0.85rem; margin:5px 0; background:#f0fdf4; border:1px solid #16a34a;"></textarea>
+            <button class="btn-manual-trigger" onclick="autoParseRuling(${instanceIdx})" 
+                style="width:100%; padding:6px; font-size:0.8rem; border:1px solid #16a34a; color:#166534; background:#fff;">
+                🔄 텍스트로 비율 자동 재설정
+            </button>
+        </div>
+    `;
+
+    names.forEach((name, idx) => {
+        // 기본값: 1/N 균등 분할
+        const defaultInternal = Math.floor(100 / count);
+        const internalVal = (idx === count - 1) ? (100 - (defaultInternal * (count - 1))) : defaultInternal;
+        
+        html += `
+            <div style="background:#f8fafc; padding:8px; border-radius:6px; margin-bottom:6px; border:1px solid #e2e8f0;">
+                <div style="font-weight:bold; font-size:0.9rem; margin-bottom:4px;">${name}</div>
+                <div style="display:flex; gap:8px; align-items:center;">
+                    <div style="flex:1;">
+                        <label style="font-size:0.75rem; color:#64748b;">내부 분담(%)</label>
+                        <div style="display:flex; align-items:center; gap:4px;">
+                            <input type="range" min="0" max="100" value="${internalVal}" 
+                                id="slider-${instanceIdx}-${idx}" 
+                                oninput="syncSliderInput(${instanceIdx}, ${idx}, this.value)" style="flex:1;">
+                            <input type="number" value="${internalVal}" 
+                                id="val-${instanceIdx}-${idx}" 
+                                onchange="syncSliderInput(${instanceIdx}, ${idx}, this.value)" 
+                                style="width:40px; text-align:center; font-size:0.8rem; border:1px solid #ccc;">
+                        </div>
+                    </div>
+                    <div style="flex:1;">
+                        <label style="font-size:0.75rem; color:#64748b;">상환 비율(신청인에게)</label>
+                        <input type="text" id="ext-${instanceIdx}-${idx}" value="100" 
+                            onkeyup="calculateAll()" placeholder="예: 1/2"
+                            style="width:100%; padding:4px; font-size:0.8rem; border:1px solid #ccc; border-radius:4px;">
+                    </div>
+                </div>
+            </div>
+        `;
+    });
+    container.innerHTML = html;
+}
+
+// 4. 슬라이더/숫자 동기화
+function syncSliderInput(instanceIdx, respIdx, value) {
+    const slider = document.getElementById(`slider-${instanceIdx}-${respIdx}`);
+    const input = document.getElementById(`val-${instanceIdx}-${respIdx}`);
+    if(slider) slider.value = value;
+    if(input) input.value = value;
+    calculateAll();
+}
+
+// 5. 텍스트 수정 후 재분석 로직
+function autoParseRuling(instanceIdx) {
+    const textEl = document.getElementById(`rulingText${instanceIdx}`);
+    const text = textEl ? textEl.value : "";
+    if (!text.trim()) { alert("분석할 텍스트가 없습니다."); return; }
+
+    const names = getRespondentNames();
+    
+    // 단순 파싱 로직 (이름 옆의 분수/퍼센트 추출)
+    names.forEach((name, idx) => {
+        // 이름 뒤 30자 이내의 비율 찾기
+        const regex = new RegExp(`${name}[^0-9a-zA-Z가-힣]{0,30}?(\\d+[./]\\d+|\\d+%)`, "i");
+        const match = text.match(regex);
+        if (match) {
+            document.getElementById(`ext-${instanceIdx}-${idx}`).value = match[1];
+        }
+    });
+    
+    // 내부 분담은 텍스트 파싱이 어려우므로 균등(1/N)으로 리셋하되 알림 제공
+    const equalShare = Math.floor(100 / names.length);
+    names.forEach((_, idx) => {
+        const val = (idx === names.length - 1) ? (100 - equalShare * (names.length - 1)) : equalShare;
+        syncSliderInput(instanceIdx, idx, val);
+    });
+
+    calculateAll();
+    alert("텍스트를 분석하여 비율을 갱신했습니다.\n(내부 분담 비율은 균등하게 초기화되었습니다)");
+}
+
+// 6. 상세 내역 표시
+function displayRespondentBreakdown(names, totals) {
+    const totalSection = document.querySelector('.total-section');
+    const oldBreakdown = document.getElementById('respondent-breakdown-list');
+    if(oldBreakdown) oldBreakdown.remove();
+
+    if (names.length < 1) return;
+
+    const container = document.createElement('div');
+    container.id = 'respondent-breakdown-list';
+    container.style.marginTop = "10px";
+    container.style.paddingTop = "10px";
+    container.style.borderTop = "1px dashed #ccc";
+    
+    let html = `<div style="font-size:0.85rem; font-weight:bold; color:#555; margin-bottom:5px;">[피신청인별 청구 내역]</div>`;
+    names.forEach((name, idx) => {
+        const amount = totals[idx] || 0;
+        html += `<div style="display:flex; justify-content:space-between; font-size:0.9rem; margin-bottom:3px;">
+                    <span>${name}</span>
+                    <span style="font-weight:bold;">${amount.toLocaleString()} 원</span>
+                 </div>`;
+    });
+    container.innerHTML = html;
+    
+    const bd = document.querySelector('.breakdown');
+    if(bd) totalSection.insertBefore(container, bd);
 }
