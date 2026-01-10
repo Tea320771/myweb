@@ -615,31 +615,51 @@ function getRespondentNames() {
     return nameVal.split('\n').filter(l => l.trim() !== "").map(l => l.replace(/^\d+[\.\)]\s*/, '').trim());
 }
 
-// 2. AI 분석 데이터 적용 (1_intro_analysis.js에서 호출)
+// 2. AI 데이터 연동 및 동적 비율 UI 관리 로직
 function applyAIAnalysisToCalculator(data) {
-    initRatioUIs(); // UI 강제 생성
+    initRatioUIs(); // UI(슬라이더 등) 강제 생성
 
     for (let i = 1; i <= 3; i++) {
-        const rulingText = data['costRulingText' + i]; // 프롬프트에서 요청한 필드명
-        const details = data['costBurdenDetails' + i]; // 프롬프트에서 요청한 배열
+        const rulingText = data['costRulingText' + i]; // 프롬프트 필드명
+        const details = data['costBurdenDetails' + i]; // 상세 분담 배열
 
+        // 판결문 주문 텍스트 채우기
         if (rulingText) {
             const textArea = document.getElementById(`rulingText${i}`);
             if (textArea) textArea.value = rulingText;
         }
 
-        if (details && Array.isArray(details)) {
-            const currentNames = getRespondentNames();
+        // [수정] 피신청인별 비율 적용 로직 강화
+        if (details && Array.isArray(details) && details.length > 0) {
+            const currentNames = getRespondentNames(); // 현재 입력된 피신청인 이름들
+            
             currentNames.forEach((name, idx) => {
-                // 이름 매칭 (부분 일치)
-                const matchedItem = details.find(d => name.includes(d.name) || d.name.includes(name));
+                // 이름 매칭 (공백 제거 후 포함 여부 확인으로 유연성 확보)
+                const cleanName = name.replace(/\s+/g, '');
+                
+                const matchedItem = details.find(d => {
+                    const cleanDName = d.name.replace(/\s+/g, '');
+                    return cleanName.includes(cleanDName) || cleanDName.includes(cleanName);
+                });
+
                 if (matchedItem) {
-                    if (matchedItem.internalShare !== undefined) syncSliderInput(i, idx, matchedItem.internalShare);
-                    if (matchedItem.reimburseRatio !== undefined) document.getElementById(`ext-${i}-${idx}`).value = matchedItem.reimburseRatio;
+                    // 1. 내부 분담 비율 (Internal Share) 적용
+                    if (matchedItem.internalShare !== undefined && matchedItem.internalShare !== null) {
+                        syncSliderInput(i, idx, matchedItem.internalShare);
+                    }
+                    
+                    // 2. 상환 비율 (Reimburse Ratio) 적용
+                    if (matchedItem.reimburseRatio !== undefined && matchedItem.reimburseRatio !== null) {
+                        const extInput = document.getElementById(`ext-${i}-${idx}`);
+                        if (extInput) {
+                            extInput.value = matchedItem.reimburseRatio;
+                        }
+                    }
                 }
             });
         }
     }
+    // 모든 값 적용 후 최종 계산 수행
     calculateAll();
 }
 

@@ -529,10 +529,27 @@ function setAndTrigger(id, value) {
     if(id === 'respondentName' || id === 'respondentAddr') return; 
 
     if(el && value) {
-        el.value = value; 
+        // [수정] 금액 데이터(소가, 수수료)일 경우 숫자만 남기고 할당 후 포맷팅 함수 호출
+        if (id.includes('soga') || id.includes('Fee')) {
+            // "금 50,000,000원" 같은 텍스트에서 숫자만 추출
+            const cleanVal = String(value).replace(/[^0-9]/g, ''); 
+            el.value = cleanVal;
+            
+            // 3_calculator.js에 있는 formatCurrency가 전역에 있다면 호출하여 콤마(,) 적용
+            if (typeof window.formatCurrency === 'function') {
+                // id에서 숫자 추출 (예: soga1 -> 1)
+                const instanceNum = id.replace(/[^0-9]/g, '');
+                window.formatCurrency(el, instanceNum);
+            }
+        } else {
+            el.value = value; 
+        }
+
         el.classList.add('ai-filled'); 
         el.dispatchEvent(new Event('input', { bubbles: true }));
         el.dispatchEvent(new Event('change', { bubbles: true }));
+        
+        // 키보드 이벤트도 트리거하여 formatCurrency나 calculateAll이 확실히 돌게 함
         if (id.includes('Fee') || id.includes('soga') || id.includes('ratio') || id === 'partyCount') {
              el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
         }
