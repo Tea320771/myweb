@@ -539,6 +539,15 @@ const noRepCheck = document.getElementById('noRepresentative');
 const step3Area = document.getElementById('step3-area');
 const btnToCaseInfo = document.getElementById('btnToCaseInfo');
 
+// [추가된 Fix] 버튼 클릭 시 페이지 전환 이벤트 추가
+if(btnToCaseInfo) {
+    btnToCaseInfo.addEventListener('click', function() {
+        document.getElementById('introPage').style.display = 'none';
+        document.getElementById('caseInfoPage').style.display = 'block';
+        window.scrollTo(0, 0);
+    });
+}
+
 function checkStep1() {
     if (appName && appName.value.trim() !== "" && appAddr && appAddr.value.trim() !== "") {
         if (step2Area.classList.contains('hidden')) { step2Area.classList.remove('hidden'); step2Area.classList.add('fade-in-section'); }
