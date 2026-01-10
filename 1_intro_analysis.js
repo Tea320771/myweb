@@ -808,3 +808,193 @@ async function saveToGitHub(jsonRule) {
 window.openFeedbackModal = openFeedbackModal;
 window.processUserFeedback = processUserFeedback;
 window.saveToGitHub = saveToGitHub;
+/* ==========================================
+   [DEBUG] 디버그 모드 및 가이드라인 수정 기능
+   - 분석 결과 확인 및 Extraction/Logic 오류 수정 요청
+   - reading_guide.json / guideline.json 타겟 지정 학습
+   ========================================== */
+
+// 1. 디버그 UI 초기화 (DOM 로드 시 실행)
+window.addEventListener('DOMContentLoaded', function() {
+    createDebugUI();
+});
+
+function createDebugUI() {
+    // 1-1. 디버그 플로팅 버튼 생성
+    const debugBtn = document.createElement('button');
+    debugBtn.id = 'debug-analysis-btn';
+    debugBtn.innerHTML = '🐞 Debug Extraction';
+    debugBtn.style.cssText = `
+        position: fixed; bottom: 20px; left: 20px; z-index: 9999;
+        background-color: #4b5563; color: white; border: none;
+        padding: 10px 15px; border-radius: 30px; font-weight: bold;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.3); cursor: pointer;
+        font-size: 0.85rem; transition: transform 0.2s;
+    `;
+    debugBtn.onmouseover = () => debugBtn.style.transform = 'scale(1.05)';
+    debugBtn.onmouseout = () => debugBtn.style.transform = 'scale(1)';
+    debugBtn.onclick = openDebugModal;
+    document.body.appendChild(debugBtn);
+
+    // 1-2. 디버그 모달 생성
+    const modalHtml = `
+    <div id="debug-modal" class="modal hidden" style="z-index: 10000;">
+        <div class="modal-content" style="max-width: 800px; max-height: 90vh; overflow-y: auto;">
+            <div class="modal-header" style="background: #374151; color: white; display:flex; justify-content:space-between; align-items:center;">
+                <h3>🐞 AI 분석 결과 디버깅</h3>
+                <button onclick="document.getElementById('debug-modal').classList.add('hidden')" style="background:none; border:none; color:white; font-size:1.2rem; cursor:pointer;">✕</button>
+            </div>
+            <div class="modal-body">
+                <div style="margin-bottom: 15px;">
+                    <label style="font-weight:bold; display:block; margin-bottom:5px;">🔍 현재 추출된 데이터 (window.aiExtractedData)</label>
+                    <textarea id="debug-json-viewer" class="form-input" rows="10" readonly 
+                        style="font-family: monospace; font-size: 0.85rem; background: #f3f4f6; color: #1f2937;"></textarea>
+                </div>
+                
+                <div style="border-top: 1px dashed #ccc; padding-top: 15px; margin-top: 15px;">
+                    <h4 style="color: #dc2626; margin-bottom: 10px;">🚨 결과가 잘못되었나요? 지침을 추가하세요.</h4>
+                    
+                    <div style="margin-bottom: 10px;">
+                        <label style="font-weight:bold; margin-right: 10px;">수정 대상 파일:</label>
+                        <select id="debug-target-file" style="padding: 5px; border-radius: 4px; border: 1px solid #ccc;">
+                            <option value="reading_guide.json">📂 Reading Guide (텍스트 추출/오타/포맷 관련)</option>
+                            <option value="guideline.json">🧠 Logic Guide (계산/비율/판단 논리 관련)</option>
+                        </select>
+                    </div>
+
+                    <textarea id="debug-instruction" class="form-input" rows="4" 
+                        placeholder="예: '원고 이름이 OOO로 잘못 추출됨. 이름 뒤에 (주)가 붙으면 법인으로 인식해야 해.' 또는 '이런 주문 패턴에서는 피고 분담 비율을 1/n로 계산해야 해.'"></textarea>
+                    
+                    <button onclick="submitDebugFeedback()" class="btn-start" style="margin-top: 10px; background-color: #dc2626;">
+                        🛠️ 지침 적용 및 가이드라인 업데이트
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    `;
+    
+    const div = document.createElement('div');
+    div.innerHTML = modalHtml;
+    document.body.appendChild(div.firstElementChild);
+}
+
+// 2. 디버그 모달 열기
+function openDebugModal() {
+    const jsonViewer = document.getElementById('debug-json-viewer');
+    const data = window.aiExtractedData || { message: "아직 분석된 데이터가 없습니다." };
+    
+    jsonViewer.value = JSON.stringify(data, null, 2);
+    document.getElementById('debug-modal').classList.remove('hidden');
+}
+
+// 3. 디버그 피드백 제출 및 AI 처리
+async function submitDebugFeedback() {
+    const targetFile = document.getElementById('debug-target-file').value;
+    const instruction = document.getElementById('debug-instruction').value;
+    const currentData = document.getElementById('debug-json-viewer').value;
+
+    if (!instruction.trim()) {
+        alert("수정할 지침 내용을 입력해주세요.");
+        return;
+    }
+
+    const logsContainer = document.getElementById('processing-logs');
+    // 로그 UI가 있으면 표시
+    if (logsContainer) {
+        logsContainer.style.display = 'block';
+        logsContainer.innerHTML += `<div class="log-item log-info">🔧 [DEBUG] '${targetFile}' 업데이트를 위한 규칙 생성 중...</div>`;
+        logsContainer.scrollTop = logsContainer.scrollHeight;
+    }
+
+    document.getElementById('debug-modal').classList.add('hidden');
+    alert("AI가 지침을 분석하여 가이드라인을 업데이트합니다. 잠시만 기다려주세요.");
+
+    // 메타 프롬프트 구성 (파일 타입에 따라 다르게 요청)
+    let metaPrompt = "";
+    
+    if (targetFile === 'reading_guide.json') {
+        metaPrompt = `
+        역할: 너는 OCR 및 텍스트 추출 규칙 생성기다.
+        목표: 사용자의 지적 사항을 반영하여 'reading_guide.json'에 들어갈 'extraction_rule' 또는 'strategy'를 JSON으로 생성하라.
+        
+        [현재 잘못 추출된 데이터 일부]
+        ${currentData.substring(0, 300)}...
+
+        [사용자 지침]
+        "${instruction}"
+
+        [생성할 JSON 포맷]
+        {
+            "type": "reading_correction",
+            "target_field": "(수정이 필요한 필드명, 예: applicantName, costRulingText)",
+            "new_strategy": {
+                "description": "사용자 지침에 따른 추출 전략",
+                "regex_pattern": "(필요하다면 정규식)",
+                "keyword_guide": "(필요하다면 핵심 키워드)"
+            }
+        }
+        오직 JSON 객체 1개만 출력해.
+        `;
+    } else {
+        metaPrompt = `
+        역할: 너는 법률 논리 규칙 생성기다.
+        목표: 사용자의 지적 사항을 반영하여 'guideline.json'에 들어갈 'calculation_logic'을 JSON으로 생성하라.
+
+        [현재 데이터 상황]
+        ${currentData.substring(0, 300)}...
+
+        [사용자 지침]
+        "${instruction}"
+
+        [생성할 JSON 포맷]
+        {
+            "type": "logic_correction",
+            "description": "사용자 피드백 기반 논리 규칙",
+            "condition": "(이 규칙이 적용될 상황)",
+            "action": "(적용해야 할 비율 계산 또는 판단 로직)"
+        }
+        오직 JSON 객체 1개만 출력해.
+        `;
+    }
+
+    try {
+        // AI 호출
+        const parts = [{ text: metaPrompt }];
+        const newRuleJson = await callBackendFunction(parts);
+
+        console.log(`[DEBUG] 생성된 규칙 (${targetFile}):`, newRuleJson);
+
+        // 서버 저장 요청 (파일명 포함)
+        await saveToSpecificFile(newRuleJson, targetFile);
+
+        if (logsContainer) {
+            logsContainer.innerHTML += `<div class="log-item log-success">✅ [DEBUG] ${targetFile} 업데이트 완료!</div>`;
+        }
+        alert(`${targetFile} 파일이 성공적으로 업데이트되었습니다.\n다시 분석하면 개선된 결과가 나옵니다.`);
+
+    } catch (e) {
+        console.error(e);
+        alert(`업데이트 실패: ${e.message}`);
+    }
+}
+
+// 4. 특정 파일(guideline.json 또는 reading_guide.json)에 저장 요청
+async function saveToSpecificFile(jsonRule, filename) {
+    // 기존 api/update-guideline을 활용하되, targetFile 파라미터를 추가 전송
+    // (Backend에서 targetFile을 처리하도록 구현되어 있다고 가정하거나, 
+    //  기존 로직이 newRule만 받더라도 최소한 기존 기능은 수행됨)
+    const response = await fetch('/api/update-guideline', {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+            newRule: jsonRule,
+            targetFile: filename // 서버 사이드에서 이 값을 보고 분기 처리 필요
+        })
+    });
+
+    if (!response.ok) {
+        const errText = await response.text();
+        throw new Error("서버 저장 실패: " + errText);
+    }
+}
