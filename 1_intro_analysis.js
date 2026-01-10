@@ -32,7 +32,90 @@ let aiExtractedData = {};
 const pageOrder = ['introPage', 'caseInfoPage', 'calcPage', 'evidencePage', 'previewPage'];
 const LOGIC_GUIDE_URL = 'guideline.json';       // 해석/논리 지침
 const READING_GUIDE_URL = 'reading_guide.json'; // 추출/읽기/포맷 지침
+/* ==========================================
+   [추가됨] 드래그 앤 드롭 및 파일 처리 로직
+   ========================================== */
+function setupDragAndDrop() {
+    const dropZone = document.getElementById('smartUploadZone');
+    if (!dropZone) return;
 
+    // 드래그 진입/이동
+    ['dragenter', 'dragover'].forEach(eventName => {
+        dropZone.addEventListener(eventName, (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            dropZone.classList.add('drag-over');
+        }, false);
+    });
+
+    // 드래그 나감/드롭
+    ['dragleave', 'drop'].forEach(eventName => {
+        dropZone.addEventListener(eventName, (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            dropZone.classList.remove('drag-over');
+        }, false);
+    });
+
+    // 드롭 이벤트 처리
+    dropZone.addEventListener('drop', (e) => {
+        const dt = e.dataTransfer;
+        const files = dt.files;
+        queueFiles(files);
+    }, false);
+}
+
+function queueFiles(files) {
+    if (!files || files.length === 0) return;
+    
+    // 파일 배열에 추가
+    for (let i = 0; i < files.length; i++) {
+        queuedFiles.push(files[i]);
+    }
+    
+    updateFileQueueUI();
+}
+
+function updateFileQueueUI() {
+    const list = document.getElementById('file-queue-list');
+    const actionArea = document.getElementById('action-area');
+    const uploadContent = document.getElementById('upload-content');
+    
+    list.innerHTML = "";
+    
+    if (queuedFiles.length > 0) {
+        list.classList.remove('hidden');
+        actionArea.classList.remove('hidden');
+        uploadContent.style.display = 'none'; 
+    } else {
+        list.classList.add('hidden');
+        actionArea.classList.add('hidden');
+        uploadContent.style.display = 'block';
+    }
+
+    queuedFiles.forEach((file, index) => {
+        const item = document.createElement('div');
+        item.className = 'file-queue-item';
+        // 스타일은 style.css에 정의된 것을 따름
+        item.innerHTML = `
+            <div style="display:flex; align-items:center;">
+                <span style="margin-right:8px;">📄</span>
+                <span>${file.name} (${(file.size/1024).toFixed(1)} KB)</span>
+            </div>
+            <span class="remove-btn" onclick="removeFile(${index})" style="cursor:pointer; color:#ef4444; font-weight:bold; margin-left:10px;">✕</span>
+        `;
+        list.appendChild(item);
+    });
+}
+
+function removeFile(index) {
+    queuedFiles.splice(index, 1);
+    updateFileQueueUI();
+    // input value 초기화 (같은 파일 재업로드 가능하게)
+    const input = document.getElementById('docInput');
+    if(input) input.value = ''; 
+}
+/* ========================================== */
 async function startAnalysis() {
     if (queuedFiles.length === 0) { alert("분석할 파일이 없습니다."); return; }
     
