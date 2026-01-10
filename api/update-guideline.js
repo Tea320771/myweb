@@ -12,20 +12,13 @@ export default async function handler(request, response) {
     return response.status(500).json({ error: '서버 설정 오류: 토큰이 없습니다.' });
   }
 
-  // 3. 사용자 입력 데이터 받기
+// 3. 사용자 입력 데이터 받기
   const { newRule } = request.body;
-  if (!newRule) {
-    return response.status(400).json({ error: '저장할 데이터가 비어있습니다.' });
-  }
-
-  // ==========================================================
-  // [수정 필요] 아래 두 줄을 본인의 깃허브 정보로 바꿔주세요!
-  // ==========================================================
-  const GITHUB_USERNAME = 'Tea320771'; // 예: 'hong-gildong'
-  const REPO_NAME = 'myweb';        // 예: 'legal-cost-calculator'
-  // ==========================================================
-
-  const FILE_PATH = 'guideline.json'; // 수정할 파일명
+  
+  // [수정] 하드코딩 제거 -> 환경변수 사용
+  const GITHUB_USERNAME = process.env.GITHUB_USERNAME || 'Tea320771'; 
+  const REPO_NAME = process.env.GITHUB_REPO_NAME || 'myweb';
+  const FILE_PATH = 'guideline.json';
   const BRANCH = 'main'; // 브랜치 이름 (보통 main 또는 master)
 
   try {

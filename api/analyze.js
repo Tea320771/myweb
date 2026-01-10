@@ -1,6 +1,5 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenerativeAI, SchemaType } from '@google/generative-ai'; // SchemaType 추가
 
-// Vercel Serverless Function 설정
 export const config = {
     maxDuration: 60,
 };
@@ -12,35 +11,32 @@ export default async function handler(req, res) {
 
     try {
         const { parts } = req.body;
-
         const apiKey = process.env.GEMINI_API_KEY;
-        if (!apiKey) {
-            return res.status(500).json({ error: '서버 설정 오류: GEMINI_API_KEY가 없습니다.' });
-        }
+        if (!apiKey) return res.status(500).json({ error: 'API Key Missing' });
 
         const genAI = new GoogleGenerativeAI(apiKey);
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-
-        // [수정됨] generationConfig에서 responseMimeType을 제거했습니다.
-        const result = await model.generateContent({
-            contents: [{ role: "user", parts: parts }],
+        // 최신 모델 사용 권장 (flash 2.0 or 1.5-pro)
+        const model = genAI.getGenerativeModel({ 
+            model: "gemini-1.5-flash",
             generationConfig: {
-                temperature: 0.2, 
-                // responseMimeType: "application/json"  <-- 이 줄이 400 오류의 원인이므로 삭제함
+                temperature: 0.1, // 정확한 데이터 추출을 위해 낮춤
+                responseMimeType: "application/json" // [복구] 이제 버전업으로 사용 가능
             }
+        });
+
+        const result = await model.generateContent({
+            contents: [{ role: "user", parts: parts }]
         });
 
         const response = await result.response;
         const text = response.text();
 
         return res.status(200).json({ 
-            candidates: [
-                { content: { parts: [{ text: text }] } }
-            ]
+            candidates: [{ content: { parts: [{ text: text }] } }]
         });
 
     } catch (error) {
-        console.error("AI 분석 중 오류:", error);
-        return res.status(500).json({ error: error.message || "AI 분석 실패" });
+        console.error("AI Error:", error);
+        return res.status(500).json({ error: error.message });
     }
 }
