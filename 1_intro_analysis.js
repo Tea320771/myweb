@@ -610,6 +610,7 @@ function checkStep3() {
     if (isValid) {
         if (btnToCaseInfo.classList.contains('hidden')) { btnToCaseInfo.classList.remove('hidden'); btnToCaseInfo.classList.add('fade-in-section'); }
     }
+}
 /* ==========================================
    [추가] 1_intro_analysis.js 맨 아래에 붙여넣으세요
    ========================================== */
