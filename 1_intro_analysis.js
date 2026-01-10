@@ -610,4 +610,90 @@ function checkStep3() {
     if (isValid) {
         if (btnToCaseInfo.classList.contains('hidden')) { btnToCaseInfo.classList.remove('hidden'); btnToCaseInfo.classList.add('fade-in-section'); }
     }
+/* ==========================================
+   [추가] 1_intro_analysis.js 맨 아래에 붙여넣으세요
+   ========================================== */
+
+// 1. 피드백 입력창 띄우기
+function openFeedbackModal(rulingText) {
+    const feedback = prompt(
+        "AI 분석이 틀렸나요?\n올바른 해석 방법을 문장으로 설명해주시면 AI가 즉시 학습합니다.\n\n" +
+        "[예시]\n'피고 이을녀는 전부 패소했으니 비용도 100% 부담해야 해.'"
+    );
+
+    if (feedback) {
+        processUserFeedback(rulingText, feedback);
+    }
+}
+
+// 2. AI에게 규칙 생성 요청 -> 서버 저장 요청
+async function processUserFeedback(rulingText, userExplanation) {
+    const logsContainer = document.getElementById('processing-logs');
+    if(logsContainer) {
+        logsContainer.style.display = 'block';
+        logsContainer.innerHTML += `<div class="log-item log-info">🧠 사용자 피드백을 학습 데이터로 변환 중...</div>`;
+    }
+
+    // 메타 프롬프트: Gemini에게 JSON 생성을 시킴
+    const metaPrompt = `
+    너는 'AI 학습 데이터 생성기'야. 
+    사용자가 법률 문서(판결문 주문)에 대한 AI의 오분석을 지적했어.
+    이 내용을 바탕으로 'guideline.json'에 추가할 규칙을 JSON으로 만들어.
+
+    [상황]
+    - 판결 주문: "${rulingText}"
+    - 사용자 정답 논리: "${userExplanation}"
+
+    [생성할 JSON 포맷]
+    {
+      "type": "user_feedback_rule",
+      "description": "사용자 피드백 기반 규칙",
+      "example_case": {
+        "ruling_text": "${rulingText.substring(0, 50)}...",
+        "logic": "${userExplanation}"
+      },
+      "step_by_step_reasoning": [
+        "1단계: (사용자 논리 상세 분해)",
+        "2단계: (사용자 논리 상세 분해)"
+      ],
+      "ideal_output_structure": {
+         "note": "이와 유사한 패턴이 나오면 위 논리를 적용할 것"
+      }
+    }
+    오직 JSON 객체 1개만 출력해.
+    `;
+
+    try {
+        // 1) Gemini에게 규칙 생성 요청 (기존 함수 재사용)
+        // 주의: callBackendFunction이 텍스트만 보낼 수 있도록 되어 있어야 합니다.
+        // 만약 파일이 필수라면, 빈 이미지를 보내거나 callBackendFunction을 조금 수정해야 합니다.
+        // 여기서는 기존 함수가 텍스트만으로도 동작한다고 가정합니다.
+        const parts = [{ text: metaPrompt }];
+        const newRuleJson = await callBackendFunction(parts); 
+
+        console.log("생성된 규칙:", newRuleJson);
+        
+        // 2) Vercel 서버로 저장 요청
+        await saveToGitHub(newRuleJson);
+        
+        if(logsContainer) logsContainer.innerHTML += `<div class="log-item log-success">✨ 학습 완료! 가이드라인이 업데이트되었습니다.</div>`;
+        alert("감사합니다. AI가 새로운 규칙을 학습하여 저장소에 기록했습니다.");
+
+    } catch (e) {
+        console.error(e);
+        alert("학습 처리 중 오류: " + e.message);
+    }
+}
+
+// 3. Vercel API 호출 (실제 저장)
+async function saveToGitHub(jsonRule) {
+    const response = await fetch('/api/update-guideline', {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ newRule: jsonRule })
+    });
+
+    if (!response.ok) {
+        throw new Error("서버 저장 실패");
+    }
 }
