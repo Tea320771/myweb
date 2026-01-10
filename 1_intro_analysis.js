@@ -1,7 +1,6 @@
 /* ==========================================
    1_intro_analysis.js
-   - [UPDATE] 피신청인 개별 입력 UI(동적 카드) 구현
-   - [UPDATE] 수동 추가/삭제 및 데이터 동기화(Sync) 기능 추가
+   - [UPDATE] 프롬프트 수정: 기존 지시사항 유지 + 금액 오인식 방지(7번) 및 상세 비용 분석(6번) 추가
    ========================================== */
 
 // --- 1. 기본 보안 및 초기화 설정 ---
@@ -145,7 +144,8 @@ async function startAnalysis() {
     try {
         let parts = [];
         
-const systemPrompt = `
+        // [수정된 프롬프트] 사용자 요청 반영
+        const systemPrompt = `
         너는 유능한 법률 사무원이야. 제공된 법률 문서 이미지(판결문, 이체내역 등)를 분석해서 소송비용확정신청에 필요한 정보를 JSON 포맷으로 추출해줘.
 
         [분석 지침]
@@ -167,6 +167,10 @@ const systemPrompt = `
            - **[추가]** 소송비용 부담에 관한 **주문 문장 전체**를 'costRulingText'에 담아라.
            - **[추가]** 피고(피신청인)가 여러 명일 경우, 주문을 해석하여 각 피고별 **'내부 분담 비율(internalShare, 숫자)'**과 **'신청인에게 상환해야 할 비율(reimburseRatio, 문자열)'**을 분석해 'costBurdenDetails' 배열에 담아라.
            - (예: "피고 A는 50% 부담, 피고 B는 나머지" -> A: internal 50, B: internal 50)
+
+        7. **금액 추출 제외 및 주의사항 (매우 중요)**:
+           - 판결문의 **'청구취지'**나 **'주문'**에 기재된 청구금액(예: 300,000,000원, 500,000,000원 등)은 손해배상 판결금이므로 **절대 변호사 착수금('startFee'), 성공보수('successFee') 또는 'ambiguousAmounts'에 포함시키지 마라.**
+           - **'ambiguousAmounts'**에는 오직 **이체확인증, 영수증** 등에서 발견되었으나 그 용도가 불확실한 금액만 담아라. 판결문에 있는 금액은 변호사 비용이 아니다.
 
         [JSON 구조]
         {
@@ -257,8 +261,7 @@ function fileToBase64(file) {
 // --- 5. 데이터 검토 ---
 function startDataReview(data) {
     if (data.ambiguousAmounts && data.ambiguousAmounts.length > 0) {
-        // ... (이체내역 모달 로직 생략, 기존 유지) ...
-        feeReviewQueue = data.ambiguousAmounts; // 간소화
+        feeReviewQueue = data.ambiguousAmounts; 
         feeReviewIndex = 0;
         showFeeReviewModal();
     } else {
@@ -386,11 +389,10 @@ function confirmPartySelection() {
         addRespondentInput(); // 최소 1개는 생성
     }
 
-fillRemainingData(aiExtractedData);
+    fillRemainingData(aiExtractedData);
     
-    // [추가] AI가 분석한 '주문 텍스트'와 '피신청인별 상세 비율'을 계산기 페이지로 전달
+    // [유지] AI가 분석한 '주문 텍스트'와 '피신청인별 상세 비율'을 계산기 페이지로 전달
     if (typeof applyAIAnalysisToCalculator === 'function') {
-        // UI가 그려질 시간을 확보하기 위해 약간의 지연 후 실행
         setTimeout(() => {
             applyAIAnalysisToCalculator(aiExtractedData);
         }, 200);
@@ -399,11 +401,10 @@ fillRemainingData(aiExtractedData);
     showManualInput();
     
     const countText = selectedResps.length > 0 ? `${selectedResps.length}명` : "0명";
-    // ... (이후 alert 등 기존 코드 유지)
     alert(`설정 완료!\n신청인: ${selectedApp ? selectedApp.name : '미선택'}\n피신청인: ${countText}이 설정되었습니다.`);
 }
 
-// [NEW] 피신청인 입력칸(카드) 추가 함수
+// [피신청인 입력칸 추가]
 function addRespondentInput(nameVal = '', addrVal = '') {
     const container = document.getElementById('respondent-dynamic-list');
     const count = container.children.length + 1;
@@ -432,10 +433,8 @@ function addRespondentInput(nameVal = '', addrVal = '') {
     syncRespondentData();
 }
 
-// [NEW] 피신청인 삭제 함수
 function removeRespondentRow(el) {
     el.closest('.respondent-row').remove();
-    // 번호 재정렬
     const rows = document.querySelectorAll('.respondent-row');
     rows.forEach((row, idx) => {
         row.querySelector('.resp-idx').innerText = idx + 1;
@@ -443,7 +442,6 @@ function removeRespondentRow(el) {
     syncRespondentData();
 }
 
-// [NEW] 동적 입력 데이터를 숨겨진 필드로 동기화 (기존 로직 호환용)
 function syncRespondentData() {
     const names = [];
     const addrs = [];
@@ -462,14 +460,13 @@ function syncRespondentData() {
         }
     });
 
-    // 숨겨진 필드 업데이트 -> 계산기/미리보기에서 이 값을 참조함
     const nameInput = document.getElementById('respondentName');
     const addrInput = document.getElementById('respondentAddr');
     
     if(nameInput) nameInput.value = names.join('\n');
     if(addrInput) addrInput.value = addrs.join('\n');
 
-    checkStep3(); // 다음 단계 버튼 활성화 체크
+    checkStep3(); 
 }
 
 function fillRemainingData(data) {
@@ -506,7 +503,7 @@ function fillRemainingData(data) {
 
 function setAndTrigger(id, value) {
     const el = document.getElementById(id);
-    if(id === 'respondentName' || id === 'respondentAddr') return; // 동적 필드는 별도 처리
+    if(id === 'respondentName' || id === 'respondentAddr') return; 
 
     if(el && value) {
         el.value = value; 
@@ -527,7 +524,6 @@ function showManualInput() {
     section.classList.add('fade-in-section');
     section.scrollIntoView({ behavior: 'smooth', block: 'start' });
     
-    // 수동 모드로 처음 열릴 때 피신청인 칸이 없으면 1개 생성
     const list = document.getElementById('respondent-dynamic-list');
     if(list && list.children.length === 0) {
         addRespondentInput();

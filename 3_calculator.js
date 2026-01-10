@@ -226,64 +226,120 @@ function syncSliderInput(instanceIdx, respIdx, value) {
 
 // [핵심] 판결문 텍스트 자동 파싱 함수
 function autoParseRuling(instanceIdx) {
-    const text = document.getElementById(`rulingText${instanceIdx}`).value;
+    const textEl = document.getElementById(`rulingText${instanceIdx}`);
+    const text = textEl ? textEl.value : "";
     if (!text.trim()) { alert("분석할 판결문 내용을 입력해주세요."); return; }
 
-    const names = getRespondentNames();
-    const appName = document.getElementById('applicantName').value.trim() || "원고";
+    const names = getRespondentNames(); // 피신청인 이름 목록
+    const appName = document.getElementById('applicantName').value.trim() || "원고"; // 신청인 이름
+    
+    // 신청인이 원고측인지 피고측인지 판단
+    const isApplicantPlaintiff = appName.includes("원고") || appName.includes("신청인");
     
     // 파싱 결과 저장소
     let internalShares = new Array(names.length).fill(null); // 내부 분담
-    let externalRatios = new Array(names.length).fill("100"); // 상환 비율
+    let externalRatios = new Array(names.length).fill(null); // 상환 비율 (신청인이 받을 %)
 
-    // 1. 기본 전략: "각자"라는 단어가 있으면 내부 분담은 1/N, 상환은 개별 파싱
-    // 예: "나머지 피고들은 원고에게... 각자 부담한다"
+    // 1. [전체 문맥 파악] 원고/피고의 일반적인 부담 비율 추출
+    // 예: "소송비용 중 1/4은 원고가, 나머지는 피고가 부담한다"
+    let globalPlaintiffBurden = 0; // 원고가 부담해야 할 비율
+    let globalDefendantBurden = 0; // 피고가 부담해야 할 비율
     
-    // 2. 개별 파싱 시도
-    // 텍스트 예시: "원고 김갑동과 피고 김삼남 사이는 ... 피고 김삼남 3/4 부담"
-    // 전략: 피신청인 이름이 문장에 등장할 때 근처의 비율(숫자 또는 분수)을 찾음
-    
+    // 원고 부담 비율 찾기 (예: "원고가 30% 부담", "원고가 4분의 1 부담")
+    const regexPlaintiff = /원고.*?(\d+)\s*분\s*의\s*(\d+).*?부담|원고.*?(\d+)%.*?부담/;
+    const matchP = text.match(regexPlaintiff);
+    if (matchP) {
+        if (matchP[1] && matchP[2]) globalPlaintiffBurden = parseFloat(matchP[2]) / parseFloat(matchP[1]);
+        else if (matchP[3]) globalPlaintiffBurden = parseFloat(matchP[3]) / 100.0;
+    }
+
+    // 피고 부담 비율 찾기
+    const regexDefendant = /피고.*?(\d+)\s*분\s*의\s*(\d+).*?부담|피고.*?(\d+)%.*?부담/;
+    const matchD = text.match(regexDefendant);
+    if (matchD) {
+        if (matchD[1] && matchD[2]) globalDefendantBurden = parseFloat(matchD[2]) / parseFloat(matchD[1]);
+        else if (matchD[3]) globalDefendantBurden = parseFloat(matchD[3]) / 100.0;
+    }
+
+    // 2. [개별 파싱] 피신청인별 상환 비율(External Ratio) 결정
     names.forEach((name, idx) => {
-        // 이름 뒤 20글자 이내에 비율이 있는지 확인
-        const regex = new RegExp(`${name}[^0-9]*([0-9]+(?:\\/[0-9]+|%|분의\\s*[0-9]+))`, "g");
-        const match = regex.exec(text); // 이름 + 비율 매칭
+        // A. 이름 옆에 직접 명시된 비율이 있는지 확인 (예: "피고 김삼남은 3/4 부담한다")
+        const directRegex = new RegExp(`${name}[^0-9a-zA-Z가-힣]{0,30}?(\\d+(?:\\/\\d+|%|\\s*분\\s*의\\s*\\d+))`, "i");
+        const matchDirect = text.match(directRegex);
         
-        // 문맥 분석: "피고 김삼남은... 부담한다" vs "원고가... 부담한다"
-        // 신청인이 원고(갑)이고, 텍스트가 "원고가 1/4 부담"이면 -> 피고(을)은 3/4 부담해야 함.
-        // 신청인이 피고(을)이고, 텍스트가 "원고가 1/4 부담"이면 -> 피고(을)은 원고에게 1/4 받을 수 있음.
-
-        // 여기서는 단순화하여, 피신청인 이름 옆에 있는 비율을 '상환 비율'로 우선 인식
-        if (match) {
-            let ratioStr = match[1];
-            // "3분의 1" -> "1/3" 변환 등은 parseRatio가 처리
-            externalRatios[idx] = ratioStr;
+        if (matchDirect) {
+            // 직접 명시된 비율이 있으면 그대로 적용
+            // (주의: "4분의 1" 텍스트를 parseRatio 함수가 처리할 수 있도록 그대로 넘김)
+            externalRatios[idx] = matchDirect[1]; 
         } else {
-            // 이름 옆에 비율이 없으면? 
-            // "나머지 피고들에 대한... 원고들이 각자 부담" -> 피신청인(피고)가 부담할 게 없음(0%)
-            // "소송비용은 피고들이 부담" -> 100%
-            if (text.includes("원고들이 각자 부담") || text.includes("원고가 부담")) {
-                if (appName.includes("원고")) externalRatios[idx] = "0"; // 원고가 신청인인데 원고부담이면 받을게 없음
-            } else if (text.includes("피고들이 부담") || text.includes("피고가 부담")) {
-                 if (!appName.includes("피고")) externalRatios[idx] = "100";
+            // B. 직접 명시가 없으면 문맥에 따른 '나머지' 계산
+            // 시나리오 1: 신청인이 [피고]이고, 텍스트에 "원고가 1/4 부담"이라고 적힘
+            // -> 피고(신청인)는 원고(피신청인)에게 1/4을 받을 수 있음 (상대방 부담분 = 내가 받을 돈)
+            if (!isApplicantPlaintiff && globalPlaintiffBurden > 0) { 
+                // 피신청인이 원고(김갑동)라면, 원고 부담분(1/4)만큼 청구 가능
+                // 만약 텍스트가 "원고와 피고 사이 비용은 원고가 1/4 부담"이라면, 피고는 1/4 못 받음? 
+                // 아닙니다. 소송비용부담 재판에서 "원고가 X 부담" = "피고는 원고에게 X 청구 가능"
+                externalRatios[idx] = (globalPlaintiffBurden * 100).toFixed(0);
+            }
+            // 시나리오 2: 신청인이 [피고]이고, 텍스트에 "피고가 3/4 부담"이라고 적힘
+            // -> 피고(신청인)는 전체 중 3/4을 자기가 내야 하므로, 원고에게는 나머지 1/4만 청구 가능
+            else if (!isApplicantPlaintiff && globalDefendantBurden > 0) {
+                 let reimbursement = 1.0 - globalDefendantBurden;
+                 if (reimbursement < 0) reimbursement = 0;
+                 externalRatios[idx] = (reimbursement * 100).toFixed(0);
+            }
+            // 시나리오 3: 신청인이 [원고]이고, 텍스트에 "원고가 1/4 부담"이라고 적힘
+            // -> 원고(신청인)는 자기가 1/4 내야 하므로, 피고에게 나머지 3/4 청구 가능
+            else if (isApplicantPlaintiff && globalPlaintiffBurden > 0) {
+                let reimbursement = 1.0 - globalPlaintiffBurden;
+                if (reimbursement < 0) reimbursement = 0;
+                externalRatios[idx] = (reimbursement * 100).toFixed(0);
+            }
+             // 시나리오 4: "피고들이 각자 부담" 또는 "전부 부담"
+            else if (text.includes("피고들이 부담") || text.includes("피고가 부담")) {
+                 if (isApplicantPlaintiff) externalRatios[idx] = "100"; // 원고는 100% 받음
+                 else externalRatios[idx] = "0"; // 피고끼리는 청구 불가(일반적)
+            }
+             // 시나리오 5: "원고들이 부담"
+            else if (text.includes("원고들이 부담") || text.includes("원고가 부담")) {
+                 if (!isApplicantPlaintiff) externalRatios[idx] = "100"; // 피고는 100% 받음
             }
         }
     });
 
-    // 3. 내부 분담 비율 (Internal Shares) 추정
-    // 특별히 "피고 A는 30%, 피고 B는 70%"라고 명시되지 않는 한 균등(1/N)으로 설정
-    // 만약 텍스트에 "피고 A와 피고 B는 3:7로 부담" 같은 게 있다면 파싱해야 함 (고급 기능)
-    // 현재는 균등 분할로 리셋
+    // 3. [내부 분담] 피신청인들 사이의 분담 비율 (기본: 균등 1/N)
+    // 사용자가 요청한 "김갑동 51%, 이을녀 49%" 같은 경우는 텍스트로 파싱하기 매우 복잡하므로
+    // 기본적으로 균등하게 나누고, 필요시 사용자가 슬라이더로 조절하게 둠.
     const equalShare = Math.floor(100 / names.length);
-    internalShares = internalShares.map((_, i) => (i === names.length-1) ? (100 - equalShare*(names.length-1)) : equalShare);
+    let remainder = 100;
+    
+    internalShares = internalShares.map((_, i) => {
+        let share = equalShare;
+        if (i === names.length - 1) share = remainder;
+        else remainder -= share;
+        return share;
+    });
 
     // UI 반영
     names.forEach((_, idx) => {
         syncSliderInput(instanceIdx, idx, internalShares[idx]);
-        document.getElementById(`ext-${instanceIdx}-${idx}`).value = externalRatios[idx];
+        
+        const extInput = document.getElementById(`ext-${instanceIdx}-${idx}`);
+        if (extInput) {
+            // 값이 있으면 넣고, 없으면 기본값 100
+            if (externalRatios[idx] !== null) {
+                // % 기호가 없으면 붙여주거나, parseRatio가 처리할 수 있는 형태인지 확인
+                let val = externalRatios[idx].toString();
+                if (!val.includes('/') && !val.includes('%')) val += "%";
+                extInput.value = val;
+            } else {
+                if(!extInput.value) extInput.value = "100";
+            }
+        }
     });
 
-    alert("판결문 내용을 바탕으로 비율을 설정했습니다.\n정확한 계산을 위해 값을 확인해주세요.");
     calculateAll();
+    alert("판결문 내용을 분석하여 비율을 설정했습니다.\n(신청인이 부담해야 할 부분을 제외한 '상환 비율'이 자동 계산되었습니다)");
 }
 
 function parseRatio(ratioStr) {
