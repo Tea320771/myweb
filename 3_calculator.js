@@ -1,6 +1,6 @@
 /* ==========================================
    3_calculator.js
-   - [UPDATE] 비율 계산 로직 추가 (parseRatio, calculateAll)
+   - [UPDATE] 비율 계산 로직 강화 (한글 분수 파싱, '각자' 부담 시 인원수 반영)
    ========================================== */
 
 function goToCalculator() {
@@ -104,25 +104,60 @@ function updateNextCardVisibility() {
     }
 }
 
-// [NEW] 비율 파싱 함수 (예: "1/3", "2/3", "100", "50%" 처리)
+// [UPDATE] 스마트 비율 파싱 함수 (한글 분수, %, 1/N 등 처리)
 function parseRatio(ratioStr) {
     if(!ratioStr) return 1.0;
     let s = ratioStr.toString().trim();
+    
+    // 1. "4분의 1", "3분의 2" 같은 한글 분수 처리 (N분의 M)
+    // 정규식: (숫자) + 공백가능 + 분의 + 공백가능 + (숫자)
+    const koreanFraction = s.match(/(\d+)\s*분\s*의\s*(\d+)/);
+    if (koreanFraction) {
+        const den = parseFloat(koreanFraction[1]); // 분모
+        const num = parseFloat(koreanFraction[2]); // 분자
+        if (den !== 0) return num / den;
+    }
+
+    // 2. "1/4", "2/3" 같은 숫자 분수 처리 (텍스트가 섞여 있어도 숫자만 추출 시도)
     if(s.includes('/')) {
         const parts = s.split('/');
-        if(parts.length === 2) {
-            const num = parseFloat(parts[0]);
-            const den = parseFloat(parts[1]);
-            if(den !== 0) return num / den;
+        if(parts.length >= 2) {
+            // "원고 1/3" 같은 경우를 대비해 숫자만 추출
+            const numStr = parts[0].match(/(\d+)/);
+            const denStr = parts[1].match(/(\d+)/);
+            if(numStr && denStr) {
+                const num = parseFloat(numStr[0]);
+                const den = parseFloat(denStr[0]);
+                if(den !== 0) return num / den;
+            }
         }
     }
+
+    // 3. "30%" 퍼센트 처리
     if(s.includes('%')) {
-        return parseFloat(s.replace('%', '')) / 100.0;
+        const val = parseFloat(s.replace(/[^0-9.]/g, ''));
+        if(!isNaN(val)) return val / 100.0;
     }
+
+    // 4. 단순 숫자 ("100", "0.5")
+    // 텍스트가 섞여있으면 parseFloat는 시작 부분의 숫자만 읽음. 
+    // 예: "100 부담한다" -> 100
     const val = parseFloat(s);
-    if(val > 1.0 && val <= 100.0) return val / 100.0; // "100" -> 1.0, "50" -> 0.5
-    if(isNaN(val)) return 1.0;
-    return val;
+    if(!isNaN(val)) {
+        if(val > 1.0 && val <= 100.0) return val / 100.0; // "100" -> 1.0, "50" -> 0.5
+        if(val <= 1.0 && val >= 0) return val;
+    }
+    
+    return 1.0; // 파싱 실패 시 기본값 100%
+}
+
+// [UPDATE] 피신청인 수 카운트 함수 (동적 입력 필드 또는 hidden input 기준)
+function getRespondentCount() {
+    // hidden field에서 줄바꿈(\n) 개수로 파악하거나, DOM 요소를 직접 셈
+    const nameVal = document.getElementById('respondentName').value;
+    if (!nameVal) return 1;
+    const lines = nameVal.split('\n').filter(line => line.trim() !== "");
+    return Math.max(1, lines.length);
 }
 
 function calculateAll() {
@@ -133,8 +168,9 @@ function calculateAll() {
     if(isNaN(partyCount) || partyCount < 2) partyCount = 2; 
     
     let totalLawyer = 0; let totalScrivener = 0; let totalCourt = 0;
-    // [NEW] 비율 적용된 최종 합계용 변수
-    let grandTotalRecoverable = 0;
+    let grandTotalRecoverable = 0; // 비율 적용된 최종 합계
+
+    const respondentCount = getRespondentCount(); // [NEW] 현재 입력된 피신청인 수
 
     for (let i = 1; i <= 3; i++) {
         const cardEl = document.getElementById('card-' + i);
@@ -153,10 +189,19 @@ function calculateAll() {
         if (i === 2) isPayer = document.getElementById('isAppellant2').checked;
         if (i === 3) isPayer = document.getElementById('isPetitioner3').checked;
 
-        // [NEW] 비율 가져오기
+        // [UPDATE] 비율 계산 및 '각자' 부담 처리
         const ratioInput = document.getElementById('ratio' + i);
         let ratioVal = 1.0;
-        if(ratioInput) ratioVal = parseRatio(ratioInput.value);
+        let isEach = false;
+
+        if(ratioInput) {
+            const rawText = ratioInput.value;
+            ratioVal = parseRatio(rawText);
+            // 텍스트에 '각자' 또는 '각'이라는 단어가 포함되어 있으면 인원수만큼 곱함
+            if (rawText.includes("각자") || rawText.includes("각")) {
+                isEach = true;
+            }
+        }
 
         let recognizedFee = 0;
         let limit = calcLawyerFeeLimit(soga);
@@ -182,21 +227,24 @@ function calculateAll() {
         document.getElementById('stamp' + i).innerText = stamp.toLocaleString();
         document.getElementById('service' + i).innerText = service.toLocaleString();
         
-        // 화면에는 '인정된 전체 금액'을 보여주되, 합계 계산 시에만 비율을 적용
+        // 단순 합계 (화면 하단 표시용 - 비율 적용 전)
         totalLawyer += recognizedFee; 
         totalScrivener += sFee; 
         totalCourt += (stamp + service);
 
-        // [NEW] 심급별 인정 총액에 비율 적용하여 합산
+        // [UPDATE] 비율 적용된 합계 계산
         let instanceTotal = recognizedFee + sFee + stamp + service;
-        let instanceRecoverable = Math.floor(instanceTotal * ratioVal);
+        
+        // 만약 '각자' 부담이라면 (비용 * 비율 * 인원수)
+        // 예: "원고들 각자 1/2 부담" -> (비용 * 0.5) * 2명 = 비용 * 1.0
+        let multiplier = isEach ? respondentCount : 1;
+        
+        let instanceRecoverable = Math.floor(instanceTotal * ratioVal * multiplier);
         grandTotalRecoverable += instanceRecoverable;
     }
     
-    // [NEW] 최종 합계 표시는 '비율이 적용된 금액'으로 설정
     document.getElementById('grandTotal').innerText = grandTotalRecoverable.toLocaleString() + " 원";
     
-    // 하단 상세 내역은 참고용으로 단순 합계 표시 (비율 미적용 상태 유지 - 혼동 방지)
     document.getElementById('totalLawyer').innerText = totalLawyer.toLocaleString();
     document.getElementById('totalScrivener').innerText = totalScrivener.toLocaleString();
     document.getElementById('totalCourt').innerText = totalCourt.toLocaleString();
