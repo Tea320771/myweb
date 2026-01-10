@@ -539,19 +539,32 @@ const noRepCheck = document.getElementById('noRepresentative');
 const step3Area = document.getElementById('step3-area');
 const btnToCaseInfo = document.getElementById('btnToCaseInfo');
 
-// [추가된 Fix] 버튼 클릭 시 페이지 전환 이벤트 추가
-if(btnToCaseInfo) {
-    btnToCaseInfo.addEventListener('click', function() {
-        // [수정] 2_case_info.js에 정의된 전환 함수 호출 (로직 연동)
-        if (typeof goToCaseInfo === 'function') {
-            goToCaseInfo();
-        } else {
-            document.getElementById('introPage').classList.add('hidden');
-            document.getElementById('caseInfoPage').classList.remove('hidden');
+// [FIXED] 버튼 클릭 이벤트: DOMContentLoaded 내부에서 안전하게 바인딩
+document.addEventListener('DOMContentLoaded', function() {
+    const btn = document.getElementById('btnToCaseInfo');
+    if (btn) {
+        btn.addEventListener('click', function() {
+            // 1. 강제 화면 전환 (외부 함수 의존 제거)
+            const intro = document.getElementById('introPage');
+            const caseInfo = document.getElementById('caseInfoPage');
+
+            if (intro) intro.style.display = 'none';
+            if (caseInfo) {
+                caseInfo.style.display = 'block';
+                caseInfo.classList.remove('hidden');
+                caseInfo.classList.add('fade-in-section');
+            }
             window.scrollTo(0, 0);
-        }
-    });
-}
+
+            // 2. 2_case_info.js 초기화 함수 호출 (존재 시)
+            if (typeof checkCaseInfoStep === 'function') {
+                checkCaseInfoStep();
+            } else if (typeof window.checkCaseInfoStep === 'function') {
+                window.checkCaseInfoStep();
+            }
+        });
+    }
+});
 
 function checkStep1() {
     if (appName && appName.value.trim() !== "" && appAddr && appAddr.value.trim() !== "") {
