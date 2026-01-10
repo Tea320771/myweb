@@ -1,15 +1,15 @@
 /* ==========================================
    2_case_info.js
-   - [UPDATE] AI 자동 입력(setAndTrigger) 호환성 강화
-   - [UPDATE] 입력 값 변경 시 즉시 버튼 활성화 체크
-   - [FIX] 계산기 이동 버튼(btnToCalculator) 작동 로직 추가 및 데이터 연동
+   - [FIX] 이벤트 리스너 등록 타이밍 문제 해결 (readyState 체크)
+   - [FIX] 계산기 이동 및 AI 데이터 전달 로직 강화
    ========================================== */
 
-window.addEventListener('DOMContentLoaded', function() {
+// 초기화 로직을 함수로 분리하여 실행 보장
+function initCaseInfoPage() {
     setupAutocomplete("courtName1", "suggestionList1");
     setupAutocomplete("courtName2", "suggestionList2");
 
-    // [NEW] 모든 사건 정보 입력 필드에 감지 리스너 추가 (AI 자동 입력 대응)
+    // [NEW] 모든 사건 정보 입력 필드에 감지 리스너 추가
     const caseInputs = [
         'courtName1', 'caseNo1', 'date1', 'finalized1',
         'courtName2', 'caseNo2', 'date2', 'finalized2',
@@ -19,64 +19,99 @@ window.addEventListener('DOMContentLoaded', function() {
     caseInputs.forEach(id => {
         const el = document.getElementById(id);
         if (el) {
-            // 키보드 입력, 값 변경, 붙여넣기 등 모든 상황 감지
             el.addEventListener('input', checkCaseInfoStep);
             el.addEventListener('change', checkCaseInfoStep);
             el.addEventListener('keyup', checkCaseInfoStep);
         }
     });
-    
-    // [FIX] 계산기 이동 버튼 이벤트 리스너 추가
+
+    // [FIX] 계산기 이동 버튼 이벤트 리스너 (안전 장치 추가)
     const btnCalc = document.getElementById('btnToCalculator');
     if (btnCalc) {
-        btnCalc.addEventListener('click', function() {
+        // 기존 리스너 중복 방지를 위해 cloneNode 사용 고려 가능하나, 여기선 단순 부착
+        btnCalc.onclick = function() { // addEventListener 대신 onclick으로 강제 할당하여 확실히 동작하게 함
             // 1. 3_calculator.js의 페이지 전환 함수 호출
+            let transitionSuccess = false;
             if (typeof goToCalculator === 'function') {
-                goToCalculator();
-
-                // 2. [핵심] 페이지 전환 후 AI 데이터(소가, 비율 등)가 초기화되지 않도록 재적용
-                // 1_intro_analysis.js에서 window.aiExtractedData에 저장한 값을 사용
-                if (typeof window.aiExtractedData !== 'undefined' && 
-                    Object.keys(window.aiExtractedData).length > 0 && 
-                    typeof applyAIAnalysisToCalculator === 'function') {
-                    
-                    // UI가 완전히 렌더링된 후 데이터 적용 (비율 슬라이더 등)
-                    setTimeout(() => {
-                        applyAIAnalysisToCalculator(window.aiExtractedData);
-                    }, 150);
+                try {
+                    goToCalculator();
+                    transitionSuccess = true;
+                } catch (e) {
+                    console.error("goToCalculator 실행 중 오류:", e);
                 }
-            } else {
-                alert("계산기 기능을 불러올 수 없습니다. (함수 누락)");
+            } 
+            
+            // 함수가 없거나 실패 시 강제 전환 (Fallback)
+            if (!transitionSuccess) {
+                const casePage = document.getElementById('caseInfoPage');
+                const calcPage = document.getElementById('calcPage');
+                if(casePage) casePage.classList.add('hidden');
+                if(calcPage) {
+                    calcPage.classList.remove('hidden');
+                    calcPage.classList.add('fade-in-section');
+                }
+                window.scrollTo(0, 0);
             }
-        });
+
+            // 2. [핵심] 페이지 전환 후 AI 데이터(소가, 비율 등)가 초기화되지 않도록 재적용
+            // 1_intro_analysis.js에서 window.aiExtractedData에 저장한 값을 사용
+            if (typeof window.aiExtractedData !== 'undefined' && 
+                window.aiExtractedData &&
+                Object.keys(window.aiExtractedData).length > 0 && 
+                typeof applyAIAnalysisToCalculator === 'function') {
+                
+                // UI가 완전히 렌더링된 후 데이터 적용 (0.2초 딜레이)
+                setTimeout(() => {
+                    console.log("AI 데이터 재적용 중...", window.aiExtractedData);
+                    applyAIAnalysisToCalculator(window.aiExtractedData);
+                }, 200);
+            }
+        };
     }
 
     // 페이지 로드 시, 이미 값이 채워져 있을 경우를 대비해 한 번 체크
     setTimeout(checkCaseInfoStep, 500);
-});
+}
+
+// [FIX] DOM이 이미 로드된 상태인지 체크하여 실행
+if (document.readyState === 'loading') {
+    window.addEventListener('DOMContentLoaded', initCaseInfoPage);
+} else {
+    // 이미 로드되었으면 즉시 실행
+    initCaseInfoPage();
+}
 
 function goToCaseInfo() {
-    playTransition("인적 사항을 확인했어요.<br>이제 수행하신 소송의 법원명, 사건번호를 기재해주세요.", function() {
+    // 안전한 전환 로직
+    const performTransition = function() {
         document.getElementById('introPage').classList.add('hidden');
         const casePage = document.getElementById('caseInfoPage');
-        casePage.classList.remove('hidden'); casePage.classList.add('fade-in-section');
+        casePage.classList.remove('hidden'); 
+        casePage.classList.add('fade-in-section');
         window.scrollTo({ top: 0, behavior: 'smooth' });
         
-        // [NEW] 페이지 진입 시 다시 한 번 버튼 상태 체크
         checkCaseInfoStep();
-        updateBackButtonVisibility(); 
-    });
+        updateBackButtonVisibility();
+    };
+
+    if (typeof playTransition === 'function') {
+        playTransition("인적 사항을 확인했어요.<br>이제 수행하신 소송의 법원명, 사건번호를 기재해주세요.", performTransition);
+    } else {
+        performTransition();
+    }
 }
 
 function checkCaseInfoStep() {
     // 1심 체크
-    const court1 = document.getElementById('courtName1').value.trim();
-    const caseNo1 = document.getElementById('caseNo1').value.trim();
-    const finalized1 = document.getElementById('finalized1').checked;
+    const court1 = document.getElementById('courtName1') ? document.getElementById('courtName1').value.trim() : "";
+    const caseNo1 = document.getElementById('caseNo1') ? document.getElementById('caseNo1').value.trim() : "";
+    const finalized1 = document.getElementById('finalized1') ? document.getElementById('finalized1').checked : false;
     
     const step2Div = document.getElementById('case-step-2');
     const step3Div = document.getElementById('case-step-3');
     const btnCalc = document.getElementById('btnToCalculator');
+    
+    if(!step2Div || !btnCalc) return; // 요소가 없으면 종료
 
     const step1Valid = (court1 !== "" && caseNo1 !== "");
 
@@ -92,9 +127,9 @@ function checkCaseInfoStep() {
     }
 
     // 2심 체크
-    const court2 = document.getElementById('courtName2').value.trim();
-    const caseNo2 = document.getElementById('caseNo2').value.trim();
-    const finalized2 = document.getElementById('finalized2').checked;
+    const court2 = document.getElementById('courtName2') ? document.getElementById('courtName2').value.trim() : "";
+    const caseNo2 = document.getElementById('caseNo2') ? document.getElementById('caseNo2').value.trim() : "";
+    const finalized2 = document.getElementById('finalized2') ? document.getElementById('finalized2').checked : false;
     
     // 2심 표시 중 & 2심 완료 & 미확정 -> 3심 표시
     if (!step2Div.classList.contains('hidden') && court2 !== "" && caseNo2 !== "" && !finalized2) {
@@ -107,7 +142,7 @@ function checkCaseInfoStep() {
     }
 
     // 최종 버튼 표시 조건
-    const caseNo3 = document.getElementById('caseNo3').value.trim();
+    const caseNo3 = document.getElementById('caseNo3') ? document.getElementById('caseNo3').value.trim() : "";
     
     let isReady = false;
     
@@ -129,8 +164,10 @@ function checkCaseInfoStep() {
 }
 
 function getMaxInstanceLevel() {
-    if (document.getElementById('finalized1').checked) return 1;
-    if (document.getElementById('finalized2').checked) return 2;
+    const f1 = document.getElementById('finalized1');
+    const f2 = document.getElementById('finalized2');
+    if (f1 && f1.checked) return 1;
+    if (f2 && f2.checked) return 2;
     return 3; 
 }
 
@@ -156,7 +193,7 @@ function setupAutocomplete(inputId, listId) {
             item.addEventListener("click", function() { 
                 input.value = match; 
                 closeList(); 
-                checkCaseInfoStep(); // [Check] 선택 시 검증 실행
+                checkCaseInfoStep();
             });
             list.appendChild(item);
         });

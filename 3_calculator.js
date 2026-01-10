@@ -1,6 +1,6 @@
 /* ==========================================
    3_calculator.js
-   - [FIX] 파일 중복 내용 제거 및 정리
+   - [FIX] goToCalculator 함수: playTransition 부재 시 안전 처리
    - [UPDATE] 'AI 가르치기' 기능을 위한 전용 모달(Large Input) 추가
    ========================================== */
 
@@ -17,48 +17,70 @@ function goToCalculator() {
     const noRepCheck = document.getElementById('noRepresentative');
     const respName = document.getElementById('respondentName');
 
-    const appNameVal = appName.value.trim() || "입력안함";
-    let repNameVal = repName.value.trim();
-    if(noRepCheck.checked) repNameVal = "없음 (본인 소송)"; else if (!repNameVal) repNameVal = "입력안함";
-    const respNameVal = respName.value.trim() || "입력안함";
-    document.getElementById('dispAppName').innerText = appNameVal;
-    document.getElementById('dispRepName').innerText = repNameVal;
-    document.getElementById('dispRespName').innerText = respNameVal;
+    const appNameVal = (appName && appName.value.trim()) || "입력안함";
+    let repNameVal = repName ? repName.value.trim() : "";
+    if(noRepCheck && noRepCheck.checked) repNameVal = "없음 (본인 소송)"; else if (!repNameVal) repNameVal = "입력안함";
+    const respNameVal = (respName && respName.value.trim()) || "입력안함";
+    
+    if(document.getElementById('dispAppName')) document.getElementById('dispAppName').innerText = appNameVal;
+    if(document.getElementById('dispRepName')) document.getElementById('dispRepName').innerText = repNameVal;
+    if(document.getElementById('dispRespName')) document.getElementById('dispRespName').innerText = respNameVal;
 
     const maxLevel = (typeof getMaxInstanceLevel === 'function') ? getMaxInstanceLevel() : 3;
     let summaryHtml = "";
-    const court1 = document.getElementById('courtName1').value || "-";
-    const caseNo1 = document.getElementById('caseNo1').value || "-";
+    const court1 = document.getElementById('courtName1') ? document.getElementById('courtName1').value : "-";
+    const caseNo1 = document.getElementById('caseNo1') ? document.getElementById('caseNo1').value : "-";
     summaryHtml += `<div class="case-item"><span>1심</span> <span>${court1} ${caseNo1}</span></div>`;
     
     if (maxLevel >= 2) {
-        const court2 = document.getElementById('courtName2').value || "-";
-        const caseNo2 = document.getElementById('caseNo2').value || "-";
+        const court2 = document.getElementById('courtName2') ? document.getElementById('courtName2').value : "-";
+        const caseNo2 = document.getElementById('caseNo2') ? document.getElementById('caseNo2').value : "-";
         summaryHtml += `<div class="case-item"><span>2심</span> <span>${court2} ${caseNo2}</span></div>`;
     }
     if (maxLevel >= 3) {
-        const court3 = document.getElementById('courtName3').value || "대법원";
-        const caseNo3 = document.getElementById('caseNo3').value || "-";
+        const court3 = document.getElementById('courtName3') ? document.getElementById('courtName3').value : "대법원";
+        const caseNo3 = document.getElementById('caseNo3') ? document.getElementById('caseNo3').value : "-";
         summaryHtml += `<div class="case-item"><span>3심</span> <span>${court3} ${caseNo3}</span></div>`;
     }
 
-    document.getElementById('caseSummary').innerHTML = summaryHtml;
-    playTransition("법원 및 사건 정보를 확인했어요.<br>이제 소송비용을 계산하도록 할게요.", function() {
-        document.getElementById('caseInfoPage').classList.add('hidden');
+    if(document.getElementById('caseSummary')) document.getElementById('caseSummary').innerHTML = summaryHtml;
+    
+    // [FIX] 페이지 전환 로직을 함수로 분리 (콜백용)
+    const performTransition = function() {
+        const casePage = document.getElementById('caseInfoPage');
         const calcPage = document.getElementById('calcPage');
-        calcPage.classList.remove('hidden'); calcPage.classList.add('fade-in-section');
+        if(casePage) casePage.classList.add('hidden');
+        if(calcPage) {
+            calcPage.classList.remove('hidden'); 
+            calcPage.classList.add('fade-in-section');
+        }
         window.scrollTo({ top: 0, behavior: 'smooth' });
-        populateFamilyOptions(); updateBackButtonVisibility();
+        
+        populateFamilyOptions(); 
+        updateBackButtonVisibility();
         
         // [NEW] 진입 시 피신청인 비율 UI 초기화
         initRatioUIs();
-    });
+    };
+
+    // playTransition이 있으면 쓰고, 없으면 바로 전환
+    if (typeof playTransition === 'function') {
+        try {
+            playTransition("법원 및 사건 정보를 확인했어요.<br>이제 소송비용을 계산하도록 할게요.", performTransition);
+        } catch(e) {
+            console.warn("Transition error, forcing change", e);
+            performTransition();
+        }
+    } else {
+        performTransition();
+    }
 }
 
 const familyCases = { "가류": ["혼인 무효", "이혼 무효", "인지 무효", "친생자관계존부확인", "입양 무효", "파양 무효"], "나류": ["사실상혼인관계존부확인", "혼인 취소", "이혼 취소", "재판상 이혼", "부의 결정", "친생부인", "인지 취소", "인지에 대한 이의", "인지청구", "입양 취소", "파양 취소", "재판상 파양", "친양자 입양 취소", "친양자 파양"], "다류": ["약혼해제/사실혼파기 손해배상", "혼인/이혼 무효/취소 손해배상", "입양/파양 무효/취소 손해배상", "재산분할 관련 사해행위 취소"], "마류": ["재산분할", "상속재산분할"] };
 let currentFamilyCategory = "";
 function populateFamilyOptions() {
     const select = document.getElementById('familySpecificCase');
+    if(!select) return;
     while (select.options.length > 1) { select.remove(1); }
     const categories = ["가류", "나류", "다류", "마류"];
     categories.forEach(cat => {
@@ -70,13 +92,17 @@ function populateFamilyOptions() {
     });
 }
 function handleFamilyCaseChange() {
-    const selectedCase = document.getElementById('familySpecificCase').value;
+    const select = document.getElementById('familySpecificCase');
+    if(!select) return;
+    const selectedCase = select.value;
     const displayDiv = document.getElementById('family-category-display');
-    if (!selectedCase) { currentFamilyCategory = ""; displayDiv.innerText = ""; calculateAll(); return; }
+    if (!selectedCase) { currentFamilyCategory = ""; if(displayDiv) displayDiv.innerText = ""; calculateAll(); return; }
     let foundCategory = "";
     for (const [category, cases] of Object.entries(familyCases)) { if (cases.includes(selectedCase)) { foundCategory = category; break; } }
     currentFamilyCategory = foundCategory;
-    if(foundCategory) displayDiv.innerText = `선택하신 사건은 [${foundCategory}] 사건으로 분류됩니다.`; else displayDiv.innerText = "";
+    if(displayDiv) {
+        if(foundCategory) displayDiv.innerText = `선택하신 사건은 [${foundCategory}] 사건으로 분류됩니다.`; else displayDiv.innerText = "";
+    }
     calculateAll();
 }
 const SERVICE_UNIT_PRICE = 5500;
@@ -96,18 +122,24 @@ function formatCurrency(input, idSuffix) {
 }
 function updateNextCardVisibility() {
     const maxLevel = (typeof getMaxInstanceLevel === 'function') ? getMaxInstanceLevel() : 3; 
-    const card1 = document.getElementById('card-1'); card1.classList.remove('card-hidden'); card1.style.display = 'flex';
+    const card1 = document.getElementById('card-1'); 
+    if(card1) { card1.classList.remove('card-hidden'); card1.style.display = 'flex'; }
+    
     const card2 = document.getElementById('card-2');
-    let showCard2 = false;
-    if (maxLevel >= 2) showCard2 = true; 
-    if (showCard2) {
-        if (card2.style.display !== 'flex') { card2.classList.remove('card-hidden'); card2.style.display = 'flex'; card2.classList.add('fade-in'); }
-    } else { card2.style.display = 'none'; card2.classList.add('card-hidden'); }
+    if(card2) {
+        let showCard2 = (maxLevel >= 2); 
+        if (showCard2) {
+            if (card2.style.display !== 'flex') { card2.classList.remove('card-hidden'); card2.style.display = 'flex'; card2.classList.add('fade-in'); }
+        } else { card2.style.display = 'none'; card2.classList.add('card-hidden'); }
+    }
+    
     const card3 = document.getElementById('card-3');
-    if (maxLevel >= 3) {
-        card3.classList.remove('card-hidden'); card3.style.display = 'flex';
-    } else {
-        card3.classList.add('card-hidden'); card3.style.display = 'none';
+    if(card3) {
+        if (maxLevel >= 3) {
+            card3.classList.remove('card-hidden'); card3.style.display = 'flex';
+        } else {
+            card3.classList.add('card-hidden'); card3.style.display = 'none';
+        }
     }
 }
 function getNumberValue(id) {
@@ -129,7 +161,8 @@ function numberToKorean(number) {
 // ==========================================
 
 function getRespondentNames() {
-    const nameVal = document.getElementById('respondentName').value;
+    const nameInput = document.getElementById('respondentName');
+    const nameVal = nameInput ? nameInput.value : "";
     if (!nameVal) return ["피신청인"];
     const lines = nameVal.split('\n').filter(line => line.trim() !== "");
     return lines.map(l => l.replace(/^\d+[\.\)]\s*/, '').trim());
@@ -137,6 +170,7 @@ function getRespondentNames() {
 
 // AI 데이터 연동 및 동적 비율 UI 관리 로직
 function applyAIAnalysisToCalculator(data) {
+    if(!data) return;
     initRatioUIs(); 
 
     for (let i = 1; i <= 3; i++) {
@@ -192,8 +226,10 @@ function createRatioUIForCard(instanceIdx) {
         container.id = `ratio-settings-container-${instanceIdx}`;
         container.className = 'ratio-settings-box';
         const sogaContainer = document.getElementById(`soga-container-${instanceIdx}`);
-        const optionsContainer = sogaContainer.querySelector('.options-container');
-        sogaContainer.insertBefore(container, optionsContainer);
+        if(sogaContainer) {
+            const optionsContainer = sogaContainer.querySelector('.options-container');
+            sogaContainer.insertBefore(container, optionsContainer);
+        }
     }
 
     const names = getRespondentNames();
@@ -266,7 +302,8 @@ function autoParseRuling(instanceIdx) {
     if (!text.trim()) { alert("분석할 판결문 내용을 입력해주세요."); return; }
 
     const names = getRespondentNames(); 
-    const appName = document.getElementById('applicantName').value.trim() || "원고"; 
+    const appNameInput = document.getElementById('applicantName');
+    const appName = appNameInput ? (appNameInput.value.trim() || "원고") : "원고";
     const isApplicantPlaintiff = appName.includes("원고") || appName.includes("신청인");
     
     let internalShares = new Array(names.length).fill(null);
@@ -378,11 +415,13 @@ function parseRatio(ratioStr) {
 }
 
 function calculateAll() {
-    const caseType = document.getElementById('caseType').value;
-    if (!caseType) return;
+    const caseTypeEl = document.getElementById('caseType');
+    if (!caseTypeEl) return;
+    const caseType = caseTypeEl.value;
     updateNextCardVisibility();
     
-    let partyCount = parseInt(document.getElementById('partyCount').value);
+    const partyCountEl = document.getElementById('partyCount');
+    let partyCount = partyCountEl ? parseInt(partyCountEl.value) : 2;
     if(isNaN(partyCount) || partyCount < 2) partyCount = 2; 
 
     const respondentNames = getRespondentNames();
@@ -399,14 +438,19 @@ function calculateAll() {
         const startFee = getNumberValue('startFee' + i);
         const successFee = getNumberValue('successFee' + i);
         const actualLawyerCost = startFee + successFee;
-        const isWithdraw = document.getElementById('withdraw' + i).checked;
-        const useScrivener = document.getElementById('useScrivener' + i).checked;
-        const isPaper = document.getElementById('isPaper' + i).checked;
+        const withdrawEl = document.getElementById('withdraw' + i);
+        const isWithdraw = withdrawEl ? withdrawEl.checked : false;
+        
+        const scrivenerEl = document.getElementById('useScrivener' + i);
+        const useScrivener = scrivenerEl ? scrivenerEl.checked : false;
+        
+        const paperEl = document.getElementById('isPaper' + i);
+        const isPaper = paperEl ? paperEl.checked : false;
         
         let isPayer = false;
-        if (i === 1) isPayer = document.getElementById('isPlaintiff1').checked;
-        if (i === 2) isPayer = document.getElementById('isAppellant2').checked;
-        if (i === 3) isPayer = document.getElementById('isPetitioner3').checked;
+        if (i === 1) { let p = document.getElementById('isPlaintiff1'); if(p) isPayer = p.checked; }
+        if (i === 2) { let p = document.getElementById('isAppellant2'); if(p) isPayer = p.checked; }
+        if (i === 3) { let p = document.getElementById('isPetitioner3'); if(p) isPayer = p.checked; }
 
         let recognizedFee = 0;
         let limit = calcLawyerFeeLimit(soga);
@@ -415,22 +459,29 @@ function calculateAll() {
 
         let sFee = 0;
         const elScrivener = document.getElementById('scrivener' + i);
-        if (useScrivener) { sFee = calcScrivenerFee(soga); elScrivener.classList.remove('inactive'); } 
-        else { elScrivener.classList.add('inactive'); }
+        if(elScrivener) {
+            if (useScrivener) { sFee = calcScrivenerFee(soga); elScrivener.classList.remove('inactive'); } 
+            else { elScrivener.classList.add('inactive'); }
+        }
 
         let stamp = 0; let service = 0;
         const elStamp = document.getElementById('stamp' + i);
         const elService = document.getElementById('service' + i);
+        
         if (isPayer) {
             stamp = calcStampDuty(soga, i, caseType, isPaper);
             service = calcServiceFee(i, partyCount, caseType, soga);
-            elStamp.classList.remove('inactive'); elService.classList.remove('inactive');
-        } else { elStamp.classList.add('inactive'); elService.classList.add('inactive'); }
+            if(elStamp) elStamp.classList.remove('inactive'); 
+            if(elService) elService.classList.remove('inactive');
+        } else { 
+            if(elStamp) elStamp.classList.add('inactive'); 
+            if(elService) elService.classList.add('inactive'); 
+        }
 
-        document.getElementById('lawyer' + i).innerText = recognizedFee.toLocaleString();
-        document.getElementById('scrivener' + i).innerText = sFee.toLocaleString();
-        document.getElementById('stamp' + i).innerText = stamp.toLocaleString();
-        document.getElementById('service' + i).innerText = service.toLocaleString();
+        if(document.getElementById('lawyer' + i)) document.getElementById('lawyer' + i).innerText = recognizedFee.toLocaleString();
+        if(document.getElementById('scrivener' + i)) document.getElementById('scrivener' + i).innerText = sFee.toLocaleString();
+        if(document.getElementById('stamp' + i)) document.getElementById('stamp' + i).innerText = stamp.toLocaleString();
+        if(document.getElementById('service' + i)) document.getElementById('service' + i).innerText = service.toLocaleString();
         
         totalLawyer += recognizedFee; 
         totalScrivener += sFee; 
@@ -451,11 +502,11 @@ function calculateAll() {
     }
     
     const grandTotalVal = respondentTotals.reduce((a, b) => a + b, 0);
-    document.getElementById('grandTotal').innerText = grandTotalVal.toLocaleString() + " 원";
+    if(document.getElementById('grandTotal')) document.getElementById('grandTotal').innerText = grandTotalVal.toLocaleString() + " 원";
     
-    document.getElementById('totalLawyer').innerText = totalLawyer.toLocaleString();
-    document.getElementById('totalScrivener').innerText = totalScrivener.toLocaleString();
-    document.getElementById('totalCourt').innerText = totalCourt.toLocaleString();
+    if(document.getElementById('totalLawyer')) document.getElementById('totalLawyer').innerText = totalLawyer.toLocaleString();
+    if(document.getElementById('totalScrivener')) document.getElementById('totalScrivener').innerText = totalScrivener.toLocaleString();
+    if(document.getElementById('totalCourt')) document.getElementById('totalCourt').innerText = totalCourt.toLocaleString();
     
     displayRespondentBreakdown(respondentNames, respondentTotals);
     checkCalculatorCompletion(); 
@@ -463,6 +514,8 @@ function calculateAll() {
 
 function displayRespondentBreakdown(names, totals) {
     const totalSection = document.querySelector('.total-section');
+    if(!totalSection) return;
+
     const oldBreakdown = document.getElementById('respondent-breakdown-list');
     if(oldBreakdown) oldBreakdown.remove();
 
@@ -490,18 +543,19 @@ function displayRespondentBreakdown(names, totals) {
     container.innerHTML = html;
     
     const breakdownDiv = document.querySelector('.breakdown');
-    totalSection.insertBefore(container, breakdownDiv);
+    if(breakdownDiv) totalSection.insertBefore(container, breakdownDiv);
 }
 
 function checkCalculatorCompletion() {
     const btn = document.getElementById('btnToEvidence');
+    if(!btn) return;
     let isAnyCardComplete = false;
     for(let i=1; i<=3; i++) {
         const card = document.getElementById('card-' + i);
         if(card && !card.classList.contains('card-hidden') && card.style.display !== 'none') {
-            const startVal = document.getElementById('startFee' + i).value;
-            const successVal = document.getElementById('successFee' + i).value;
-            const sogaVal = document.getElementById('soga' + i).value;
+            const startVal = document.getElementById('startFee' + i)?.value;
+            const successVal = document.getElementById('successFee' + i)?.value;
+            const sogaVal = document.getElementById('soga' + i)?.value;
             if(startVal !== "" && successVal !== "" && sogaVal !== "") {
                 isAnyCardComplete = true; break; 
             }
@@ -557,12 +611,15 @@ function calcServiceFee(instance, totalParties, caseType, soga) {
     return targetCount * times * UNIT;
 }
 function showContentAndCalculate() {
-    const caseType = document.getElementById('caseType').value;
+    const caseTypeEl = document.getElementById('caseType');
+    if(!caseTypeEl) return;
+    const caseType = caseTypeEl.value;
+    
     const mainContent = document.getElementById('main-calc-content');
     const familyContainer = document.getElementById('family-specific-container');
     
-    if (caseType === 'family') { familyContainer.classList.remove('hidden'); familyContainer.classList.add('fade-in'); } 
-    else { familyContainer.classList.add('hidden'); document.getElementById('familySpecificCase').value = ""; currentFamilyCategory = ""; document.getElementById('family-category-display').innerText = ""; }
+    if (caseType === 'family') { if(familyContainer) { familyContainer.classList.remove('hidden'); familyContainer.classList.add('fade-in'); } } 
+    else { if(familyContainer) familyContainer.classList.add('hidden'); if(document.getElementById('familySpecificCase')) document.getElementById('familySpecificCase').value = ""; currentFamilyCategory = ""; if(document.getElementById('family-category-display')) document.getElementById('family-category-display').innerText = ""; }
     
     let txt1_withdraw = "소취하"; 
     let txt2_title = "2심 (항소심)";
@@ -589,7 +646,7 @@ function showContentAndCalculate() {
     const lblPet3 = document.querySelector('#isPetitioner3 + span'); if(lblPet3) lblPet3.innerText = txt3_party;
     const lblW3 = document.querySelector('#withdraw3 + span'); if(lblW3) lblW3.innerText = txt3_withdraw;
 
-    if (caseType) { mainContent.classList.remove('hidden'); mainContent.classList.add('fade-in-section'); calculateAll(); }
+    if (caseType) { if(mainContent) { mainContent.classList.remove('hidden'); mainContent.classList.add('fade-in-section'); } calculateAll(); }
 }
 
 // ==========================================
