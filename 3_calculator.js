@@ -1,5 +1,6 @@
 /* ==========================================
    3_calculator.js
+   - [FIX] 파일 끝 문법 오류(중괄호 중복) 수정
    - [UPDATE] 피신청인별 '내부 분담 비율' 및 '상환 비율' 개별 제어 (슬라이더 지원)
    - [UPDATE] 판결문 텍스트 기반 자동 비율 파싱 및 적용
    ========================================== */
@@ -12,7 +13,6 @@ let respondentRatioState = {
 };
 
 function goToCalculator() {
-    // ... (기존 상단 초기화 로직 유지) ...
     const appName = document.getElementById('applicantName');
     const repName = document.getElementById('repName');
     const noRepCheck = document.getElementById('noRepresentative');
@@ -32,7 +32,6 @@ function goToCalculator() {
     const caseNo1 = document.getElementById('caseNo1').value || "-";
     summaryHtml += `<div class="case-item"><span>1심</span> <span>${court1} ${caseNo1}</span></div>`;
     
-    // ... (중략: 심급 요약 표시 로직) ...
     if (maxLevel >= 2) {
         const court2 = document.getElementById('courtName2').value || "-";
         const caseNo2 = document.getElementById('caseNo2').value || "-";
@@ -56,8 +55,6 @@ function goToCalculator() {
         initRatioUIs();
     });
 }
-
-// ... (기존 formatCurrency, updateNextCardVisibility 등 유틸 함수 유지) ...
 
 const familyCases = { "가류": ["혼인 무효", "이혼 무효", "인지 무효", "친생자관계존부확인", "입양 무효", "파양 무효"], "나류": ["사실상혼인관계존부확인", "혼인 취소", "이혼 취소", "재판상 이혼", "부의 결정", "친생부인", "인지 취소", "인지에 대한 이의", "인지청구", "입양 취소", "파양 취소", "재판상 파양", "친양자 입양 취소", "친양자 파양"], "다류": ["약혼해제/사실혼파기 손해배상", "혼인/이혼 무효/취소 손해배상", "입양/파양 무효/취소 손해배상", "재산분할 관련 사해행위 취소"], "마류": ["재산분할", "상속재산분할"] };
 let currentFamilyCategory = "";
@@ -729,4 +726,5 @@ function displayRespondentBreakdown(names, totals) {
     
     const bd = document.querySelector('.breakdown');
     if(bd) totalSection.insertBefore(container, bd);
+}
 }
