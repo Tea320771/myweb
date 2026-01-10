@@ -2,6 +2,7 @@
    2_case_info.js
    - [UPDATE] AI 자동 입력(setAndTrigger) 호환성 강화
    - [UPDATE] 입력 값 변경 시 즉시 버튼 활성화 체크
+   - [FIX] 계산기 이동 버튼(btnToCalculator) 작동 로직 추가 및 데이터 연동
    ========================================== */
 
 window.addEventListener('DOMContentLoaded', function() {
@@ -24,6 +25,31 @@ window.addEventListener('DOMContentLoaded', function() {
             el.addEventListener('keyup', checkCaseInfoStep);
         }
     });
+    
+    // [FIX] 계산기 이동 버튼 이벤트 리스너 추가
+    const btnCalc = document.getElementById('btnToCalculator');
+    if (btnCalc) {
+        btnCalc.addEventListener('click', function() {
+            // 1. 3_calculator.js의 페이지 전환 함수 호출
+            if (typeof goToCalculator === 'function') {
+                goToCalculator();
+
+                // 2. [핵심] 페이지 전환 후 AI 데이터(소가, 비율 등)가 초기화되지 않도록 재적용
+                // 1_intro_analysis.js에서 window.aiExtractedData에 저장한 값을 사용
+                if (typeof window.aiExtractedData !== 'undefined' && 
+                    Object.keys(window.aiExtractedData).length > 0 && 
+                    typeof applyAIAnalysisToCalculator === 'function') {
+                    
+                    // UI가 완전히 렌더링된 후 데이터 적용 (비율 슬라이더 등)
+                    setTimeout(() => {
+                        applyAIAnalysisToCalculator(window.aiExtractedData);
+                    }, 150);
+                }
+            } else {
+                alert("계산기 기능을 불러올 수 없습니다. (함수 누락)");
+            }
+        });
+    }
 
     // 페이지 로드 시, 이미 값이 채워져 있을 경우를 대비해 한 번 체크
     setTimeout(checkCaseInfoStep, 500);

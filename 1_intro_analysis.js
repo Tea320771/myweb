@@ -28,7 +28,8 @@ window.addEventListener('DOMContentLoaded', function() {
 
 // --- 전역 변수 ---
 let queuedFiles = [];       
-let aiExtractedData = {};   
+// [FIX] 전역 접근 가능하도록 window 객체에 할당
+window.aiExtractedData = {};   
 const pageOrder = ['introPage', 'caseInfoPage', 'calcPage', 'evidencePage', 'previewPage'];
 const LOGIC_GUIDE_URL = 'guideline.json';       // 해석/논리 지침
 const READING_GUIDE_URL = 'reading_guide.json'; // 추출/읽기/포맷 지침
@@ -195,11 +196,12 @@ async function startAnalysis() {
         logsContainer.innerHTML += `<div class="log-item log-info" style="font-weight:bold;">AI가 문서를 분석 중입니다...</div>`;
         logsContainer.scrollTop = logsContainer.scrollHeight;
 
-        aiExtractedData = await callBackendFunction(parts);
+        // [FIX] 결과를 window.aiExtractedData에 저장
+        window.aiExtractedData = await callBackendFunction(parts);
 
         logsContainer.innerHTML += `<div class="log-item log-success" style="font-weight:bold;">✨ AI 분석 완료! 결과 확인</div>`;
         
-        setTimeout(() => { startDataReview(aiExtractedData); }, 800);
+        setTimeout(() => { startDataReview(window.aiExtractedData); }, 800);
 
     } catch (error) {
         console.error(error);
@@ -254,7 +256,7 @@ function startDataReview(data) {
 function showFeeReviewModal() {
     if (feeReviewIndex >= feeReviewQueue.length) {
         document.getElementById('fee-check-modal').classList.add('hidden');
-        showApplicantModal(aiExtractedData);
+        showApplicantModal(window.aiExtractedData);
         return;
     }
     const currentItem = feeReviewQueue[feeReviewIndex];
@@ -265,7 +267,7 @@ function showFeeReviewModal() {
 function resolveFee(action) {
     if (action !== 'skip') {
         const currentItem = feeReviewQueue[feeReviewIndex];
-        const data = aiExtractedData;
+        const data = window.aiExtractedData;
         let selectedLevel = '1';
         const radios = document.getElementsByName('feeLevel');
         for(let r of radios) { if(r.checked) { selectedLevel = r.value; break; } }
@@ -371,12 +373,12 @@ function confirmPartySelection() {
         addRespondentInput(); // 최소 1개는 생성
     }
 
-    fillRemainingData(aiExtractedData);
+    fillRemainingData(window.aiExtractedData);
     
     // [유지] AI가 분석한 '주문 텍스트'와 '피신청인별 상세 비율'을 계산기 페이지로 전달
     if (typeof applyAIAnalysisToCalculator === 'function') {
         setTimeout(() => {
-            applyAIAnalysisToCalculator(aiExtractedData);
+            applyAIAnalysisToCalculator(window.aiExtractedData);
         }, 200);
     }
 
