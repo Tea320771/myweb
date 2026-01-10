@@ -305,11 +305,14 @@ function createRatioUIForCard(instanceIdx) {
         const defaultInternal = Math.floor(100 / count);
         const internalVal = (idx === count - 1) ? (100 - (defaultInternal * (count - 1))) : defaultInternal;
         
+        // [FIX] 피신청인이 1명일 경우 내부 분담 비율 조정 바(Slider) 숨김 처리
+        const internalStyle = (count === 1) ? "display:none;" : "flex:1;";
+
         html += `
             <div class="respondent-ratio-row" data-idx="${idx}" style="background:#f8fafc; padding:10px; border-radius:6px; margin-bottom:8px; border:1px solid #e2e8f0;">
                 <div style="font-weight:bold; margin-bottom:5px;">${name}</div>
                 <div style="display:flex; gap:10px; align-items:center; margin-bottom:5px;">
-                    <div style="flex:1;">
+                    <div style="${internalStyle}">
                         <label style="font-size:0.75rem; color:#64748b;">내부 분담 (${name}의 몫)</label>
                         <div style="display:flex; align-items:center; gap:5px;">
                             <input type="range" min="0" max="100" value="${internalVal}" 
