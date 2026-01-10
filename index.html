@@ -467,17 +467,41 @@
 <script src="5_preview.js"></script>
 
 <div id="applicant-selection-modal" class="modal hidden">
-    <div class="modal-content">
+    <div class="modal-content" style="max-width: 600px;">
         <div class="modal-header">
-            <h3>신청인(채권자) 확인</h3>
+            <h3>당사자 확정 및 역할 지정</h3>
         </div>
         <div class="modal-body">
-            <p id="modal-desc">문서 분석 결과, 당사자가 확인되었습니다.<br>이 신청서를 작성하는 <strong>신청인(비용을 받을 사람)</strong>은 누구인가요?</p>
+            <p id="modal-desc" style="margin-bottom:20px; color:#4b5563;">
+                판결문에서 분석된 당사자 목록입니다.<br>
+                <strong>누가 신청하고, 누구에게 청구할지</strong> 선택해주세요.
+            </p>
             
-            <div class="selection-box">
+            <div style="display:flex; gap:20px; text-align:left;">
+                <div style="flex:1; background:#f9fafb; padding:15px; border-radius:8px; border:1px solid #e5e7eb;">
+                    <div style="font-weight:bold; color:var(--color-lawyer); margin-bottom:10px; border-bottom:2px solid var(--color-lawyer); padding-bottom:5px;">
+                        신청인 (받을 사람 1명)
+                    </div>
+                    <div id="applicant-list-container" style="max-height:200px; overflow-y:auto;">
+                        </div>
                 </div>
-            
-            <p class="modal-hint">※ 소송비용을 부담하지 않는(승소한) 쪽이 주로 신청인이 됩니다.</p>
+
+                <div style="flex:1; background:#f9fafb; padding:15px; border-radius:8px; border:1px solid #e5e7eb;">
+                    <div style="font-weight:bold; color:#dc2626; margin-bottom:10px; border-bottom:2px solid #dc2626; padding-bottom:5px;">
+                        피신청인 (줄 사람)
+                    </div>
+                    <div id="respondent-list-container" style="max-height:200px; overflow-y:auto;">
+                        </div>
+                </div>
+            </div>
+
+            <div style="margin-top:20px; font-size:0.9rem; color:#6b7280;">
+                ※ 피신청인이 여러 명일 경우 자동으로 번호를 매겨 입력됩니다.
+            </div>
+
+            <button class="btn-start" onclick="confirmPartySelection()" style="margin-top: 20px;">
+                선택 완료 및 적용
+            </button>
         </div>
     </div>
 </div>
