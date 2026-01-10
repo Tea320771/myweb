@@ -20,7 +20,7 @@ const genAI = new GoogleGenerativeAI(apiKey);
             // [수정 전] model: "gemini-1.5-flash", 
             
             // [수정 후] 아래 모델명 중 하나를 사용하세요. (flash-latest 추천)
-            model: "gemini-1.5-flash-latest", 
+            model: "gemini-flash-latest", 
             
             generationConfig: {
                 temperature: 0.1, // 정확한 데이터 추출을 위해 낮춤
