@@ -14,13 +14,17 @@ export default async function handler(req, res) {
         const apiKey = process.env.GEMINI_API_KEY;
         if (!apiKey) return res.status(500).json({ error: 'API Key Missing' });
 
-        const genAI = new GoogleGenerativeAI(apiKey);
+const genAI = new GoogleGenerativeAI(apiKey);
         // 최신 모델 사용 권장 (flash 2.0 or 1.5-pro)
         const model = genAI.getGenerativeModel({ 
-            model: "gemini-1.5-flash",
+            // [수정 전] model: "gemini-1.5-flash", 
+            
+            // [수정 후] 아래 모델명 중 하나를 사용하세요. (flash-latest 추천)
+            model: "gemini-1.5-flash-latest", 
+            
             generationConfig: {
                 temperature: 0.1, // 정확한 데이터 추출을 위해 낮춤
-                responseMimeType: "application/json" // [복구] 이제 버전업으로 사용 가능
+                responseMimeType: "application/json" 
             }
         });
 
