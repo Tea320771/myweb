@@ -1,0 +1,37 @@
+{
+  "description": "문서의 물리적 구조 파악, 텍스트 추출, 그리고 최종 출력 데이터 구조에 대한 지침",
+  "basic_extraction_rules": [
+    "1. [심급 추론]: 파일명이나 내용에 '1심', '2심' 등이 있으면 해당 심급으로 처리한다.",
+    "2. [당사자 추출]: '외 1' 등으로 뭉뚱그리지 말고, 문서에 나오는 '모든' 원고와 피고의 이름/주소를 각각 추출한다.",
+    "3. [총 당사자 수]: 원고 수와 피고 수를 합산하여 'totalPartyCount'에 담는다.",
+    "4. [기본 정보]: 판결선고일, 소가는 각 심급별로 정확히 추출한다.",
+    "5. [법원명 표준화]: '제xx민사부' 등은 제거하고 법원명(예: 서울중앙지방법원)만 남긴다.",
+    "6. [금액 제외]: 판결문의 청구취지나 주문에 있는 손해배상금(청구금액)은 변호사 비용이 아니므로 절대 추출하지 않는다."
+  ],
+  "strategies": [
+    {
+      "target": "costRulingText (소송비용 주문 텍스트)",
+      "priority": "Highest",
+      "reading_rules": [
+        "문서 중앙 또는 상단의 '주 문' 또는 '주'와 '문' 사이 줄바꿈이 있는 헤더를 찾는다.",
+        "주문 번호 중 '소송비용' 단어가 포함된 문장을 찾는다.",
+        "해당 문장이 물리적으로 여러 줄에 걸쳐 있더라도, 문장의 끝(마침표)까지 공백으로 연결하여 하나의 텍스트로 합친다.",
+        "이 텍스트를 토씨 하나 빠뜨리지 말고 원문 그대로 'costRulingText' 필드에 담는다."
+      ]
+    }
+  ],
+  "output_format_guide": {
+    "instruction": "반드시 아래 JSON 구조에 맞춰 응답해야 하며, 마크다운 없이 순수 JSON 텍스트만 출력해라.",
+    "json_structure_example": {
+      "plaintiffs": [ { "name": "김갑동", "addr": "서울..." } ],
+      "defendants": [ { "name": "김삼남", "addr": "..." } ],
+      "totalPartyCount": 3,
+      "courtName1": "서울중앙지방법원", "caseNo1": "2023가합1234", "rulingDate1": "2024. 1. 1.", "soga1": "50000000",
+      "costRulingText1": "3. 소송비용은 피고 김삼남이 부담한다.",
+      "costBurdenDetails1": [ { "name": "김삼남", "internalShare": 100, "reimburseRatio": "100" } ],
+      "courtName2": "...", "caseNo2": "...", "costRulingText2": "", "costBurdenDetails2": [],
+      "courtName3": "...", "caseNo3": "...", "costRulingText3": "", "costBurdenDetails3": [],
+      "ambiguousAmounts": []
+    }
+  }
+}

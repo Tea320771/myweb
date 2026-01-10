@@ -30,109 +30,9 @@ window.addEventListener('DOMContentLoaded', function() {
 let queuedFiles = [];       
 let aiExtractedData = {};   
 const pageOrder = ['introPage', 'caseInfoPage', 'calcPage', 'evidencePage', 'previewPage'];
-const GUIDELINE_URL = 'guideline.json'; // [추가] 해석 가이드라인 파일 경로
+const LOGIC_GUIDE_URL = 'guideline.json';       // 해석/논리 지침
+const READING_GUIDE_URL = 'reading_guide.json'; // 추출/읽기/포맷 지침
 
-// 이체내역 검토를 위한 상태 변수
-let feeReviewQueue = [];
-let feeReviewIndex = 0;
-
-// --- 2. 네비게이션 및 공통 UI 로직 ---
-function playTransition(message, callback) {
-    const overlay = document.getElementById('transition-overlay');
-    const textContent = document.getElementById('transition-text-content');
-    textContent.innerHTML = message;
-    overlay.classList.remove('hidden');
-    textContent.classList.add('animate-flow');
-    setTimeout(() => {
-        overlay.classList.add('hidden'); textContent.classList.remove('animate-flow');
-        if (callback) callback();
-    }, 2500);
-}
-
-function updateBackButtonVisibility() {
-    const backBtn = document.getElementById('globalBackBtn');
-    const introPage = document.getElementById('introPage');
-    if (!introPage.classList.contains('hidden')) backBtn.classList.remove('visible'); else backBtn.classList.add('visible');
-}
-
-function goBackStep() {
-    let currentIndex = -1;
-    for (let i = 0; i < pageOrder.length; i++) { if (!document.getElementById(pageOrder[i]).classList.contains('hidden')) { currentIndex = i; break; } }
-    if (currentIndex > 0) {
-        const currentPage = document.getElementById(pageOrder[currentIndex]);
-        const prevPage = document.getElementById(pageOrder[currentIndex - 1]);
-        currentPage.classList.add('hidden'); currentPage.classList.remove('fade-in-section'); 
-        prevPage.classList.remove('hidden'); prevPage.classList.add('fade-in-section'); 
-        window.scrollTo({ top: 0, behavior: 'smooth' }); updateBackButtonVisibility();
-    }
-}
-
-// --- 3. 파일 업로드 및 대기열 관리 로직 ---
-function setupDragAndDrop() {
-    const dropZone = document.getElementById('smartUploadZone');
-    ['dragenter', 'dragover'].forEach(eventName => {
-        dropZone.addEventListener(eventName, (e) => {
-            e.preventDefault(); e.stopPropagation();
-            dropZone.classList.add('drag-over');
-        }, false);
-    });
-    ['dragleave', 'drop'].forEach(eventName => {
-        dropZone.addEventListener(eventName, (e) => {
-            e.preventDefault(); e.stopPropagation();
-            dropZone.classList.remove('drag-over');
-        }, false);
-    });
-    dropZone.addEventListener('drop', (e) => {
-        queueFiles(e.dataTransfer.files); 
-    }, false);
-}
-
-function queueFiles(files) {
-    if (!files || files.length === 0) return;
-    for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        if (!file.type.startsWith('image/') && file.type !== 'application/pdf') {
-            alert(`지원하지 않는 파일 형식입니다: ${file.name}\n(이미지 또는 PDF만 가능)`);
-            continue;
-        }
-        const isDuplicate = queuedFiles.some(f => f.name === file.name && f.size === file.size);
-        if (!isDuplicate) queuedFiles.push(file);
-    }
-    updateFileListUI();
-}
-
-function updateFileListUI() {
-    const listContainer = document.getElementById('file-queue-list');
-    const actionArea = document.getElementById('action-area');
-    listContainer.innerHTML = "";
-    
-    if (queuedFiles.length > 0) {
-        listContainer.classList.remove('hidden');
-        actionArea.classList.remove('hidden');
-    } else {
-        listContainer.classList.add('hidden');
-        actionArea.classList.add('hidden');
-    }
-
-    queuedFiles.forEach((file, index) => {
-        const item = document.createElement('div');
-        item.className = 'file-queue-item';
-        let icon = file.type === 'application/pdf' ? '📑' : '📷';
-        item.innerHTML = `
-            <div class="file-name">${icon} ${file.name} <span style="font-size:0.8em; color:#94a3b8;">(${Math.round(file.size/1024)}KB)</span></div>
-            <div class="file-remove" onclick="removeFile(${index})" title="삭제">×</div>
-        `;
-        listContainer.appendChild(item);
-    });
-}
-
-function removeFile(index) {
-    queuedFiles.splice(index, 1);
-    updateFileListUI();
-    document.getElementById('docInput').value = ""; 
-}
-
-// --- 4. 분석 시작 ---
 async function startAnalysis() {
     if (queuedFiles.length === 0) { alert("분석할 파일이 없습니다."); return; }
     
@@ -141,67 +41,60 @@ async function startAnalysis() {
     
     actionArea.classList.add('hidden'); 
     logsContainer.style.display = 'block';
-    logsContainer.innerHTML = `<div class="log-item log-info">AI 분석 엔진(Gemini) 준비 중...</div>`;
+    logsContainer.innerHTML = `<div class="log-item log-info">AI 분석 엔진 준비 중...</div>`;
 
     try {
-        let guidelineText = "";
+        // [수정] 두 개의 가이드라인 파일을 로드
+        let readingGuideStr = "";
+        let logicGuideStr = "";
+        
         try {
-            logsContainer.innerHTML += `<div class="log-item log-info">📚 해석 가이드라인 불러오는 중...</div>`;
-            const response = await fetch(GUIDELINE_URL);
-            if (response.ok) {
-                const guideJson = await response.json();
-                guidelineText = JSON.stringify(guideJson, null, 2);
-                logsContainer.innerHTML += `<div class="log-item log-success">✅ 가이드라인 로드 완료</div>`;
+            logsContainer.innerHTML += `<div class="log-item log-info">📚 분석 지침(Reading & Logic) 불러오는 중...</div>`;
+            
+            const [readingResp, logicResp] = await Promise.all([
+                fetch(READING_GUIDE_URL),
+                fetch(LOGIC_GUIDE_URL)
+            ]);
+
+            if (readingResp.ok) {
+                const rJson = await readingResp.json();
+                readingGuideStr = JSON.stringify(rJson, null, 2);
             }
+            if (logicResp.ok) {
+                const lJson = await logicResp.json();
+                logicGuideStr = JSON.stringify(lJson, null, 2);
+            }
+
+            logsContainer.innerHTML += `<div class="log-item log-success">✅ 가이드라인 로드 완료</div>`;
         } catch (e) {
-            console.warn("가이드라인 로드 실패(무시하고 진행):", e);
+            console.warn("가이드라인 로드 중 일부 실패(기본값으로 진행):", e);
         }
 
         let parts = [];
         
-        // [수정됨] 프롬프트의 6번 항목(소송비용 추출)을 대폭 강화
+        // [최종 수정] 프롬프트 개선: reading_guide.json의 특정 필드(rules, strategies)를 강제로 따르도록 지시 강화
         const systemPrompt = `
-        너는 유능한 법률 사무원이야. 제공된 법률 문서 이미지(판결문, 이체내역 등)를 분석해서 소송비용확정신청에 필요한 정보를 JSON 포맷으로 추출해줘.
-
-        [참고: 해석 가이드라인 (학습 데이터)]
-        ${guidelineText}
-
-        [분석 지침]
-        1. **심급 추론**: 파일명에 '1심', '2심' 등이 있으면 해당 심급으로 처리해라.
-           
-        2. **당사자 개별 추출**: 'plaintiffs', 'defendants' 배열에 이름과 주소를 정확히 담아라. (다수 당사자 누락 금지)
+        너는 유능한 법률 사무원이야. 제공된 법률 문서 이미지(판결문, 이체내역 등)를 분석해서 소송비용확정신청에 필요한 정보를 JSON 포맷으로 추출해야 해.
         
-        3. **총 당사자 수**: 'totalPartyCount'에 담아라.
+        작업은 반드시 아래 [STEP 1] -> [STEP 2] -> [STEP 3] 순서로 진행해라.
 
-        4. **판결선고일, 소가**: 각 심급별로 정확히 추출해라.
+        === [STEP 1: 문서 읽기 및 텍스트 추출 (Reading Phase)] ===
+        아래 제공된 **'Reading Guide Data'** 내부의 **"basic_extraction_rules"**와 **"strategies"**를 철저히 준수하여 데이터를 추출해라.
+        1. **"basic_extraction_rules"**에 따라 원고/피고 전원의 이름과 주소, 심급 정보 등을 빠짐없이 추출해라.
+        2. **"strategies"** 항목을 참조하여, 문서 내 줄바꿈이나 노이즈가 있더라도 **'주문 텍스트(costRulingText)'**를 완벽한 문장으로 복원해라.
         
-        5. **법원명 표준화**: '제xx민사부' 등은 제거하고 법원명만 남겨라.
+        [Reading Guide Data]
+        ${readingGuideStr}
 
-        6. **[중요] 소송비용 주문 텍스트 및 분담 비율 추출**: 
-           - 문서에서 **'주 문'** 또는 **'주' (줄바꿈) '문'** 이라고 적힌 섹션을 최우선으로 찾아라.
-           - 주문 내용 중 **'소송비용'**이라는 단어가 포함된 문장(예: "소송비용은 피고가 부담한다", "소송총비용 중..." 등)을 찾아서, 중간에 줄바꿈이 있더라도 공백으로 이어붙여 하나의 완벽한 문장으로 만들어라.
-           - 이 문장 전체를 **'costRulingText1'** (파일명이 1심일 경우), 'costRulingText2' (2심) 필드에 **토씨 하나 빠뜨리지 말고 원문 그대로** 담아라.
-           - 피고(피신청인)가 여러 명일 경우, 이 문장을 분석하여 각 피고별 **'내부 분담 비율(internalShare, 숫자)'**과 **'신청인에게 상환해야 할 비율(reimburseRatio, 문자열)'**을 도출해 'costBurdenDetails' 배열에 담아라.
-           - (예: 주문에 "피고들은 연대하여..."가 없으면 원칙적으로 균등분할(1/N)이다.)
+        === [STEP 2: 데이터 해석 및 논리 적용 (Logic Phase)] ===
+        위에서 추출한 텍스트(특히 costRulingText)를 바탕으로, 아래 **'Logic Guide Data'**의 논리를 적용하여 '내부 분담 비율(internalShare)'과 '상환 비율(reimburseRatio)'을 계산해라.
+        
+        [Logic Guide Data]
+        ${logicGuideStr}
 
-        7. **금액 추출 제외**: 판결문의 청구취지/주문에 있는 '손해배상금(청구금액)'은 절대 변호사 비용(startFee/successFee)이나 'ambiguousAmounts'에 넣지 마라.
-
-        [JSON 구조 예시]
-        {
-          "plaintiffs": [ { "name": "김갑동", "addr": "서울..." } ],
-          "defendants": [ { "name": "김삼남", "addr": "..." } ],
-          "totalPartyCount": 3, 
-          
-          "courtName1": "서울중앙지방법원", "caseNo1": "2023가합1234", "rulingDate1": "2024. 1. 1.", "soga1": "50000000",
-          "costRulingText1": "3. 소송비용은 피고 김삼남이 부담한다.", 
-          "costBurdenDetails1": [ { "name": "김삼남", "internalShare": 100, "reimburseRatio": "100" } ],
-
-          "courtName2": "...", "caseNo2": "...", "costRulingText2": "", "costBurdenDetails2": [],
-          "courtName3": "...", "caseNo3": "...", "costRulingText3": "", "costBurdenDetails3": [],
-
-          "ambiguousAmounts": []
-        }
-        반드시 JSON 형식의 텍스트만 응답해.
+        === [STEP 3: 최종 출력] ===
+        위 'Reading Guide Data'에 명시된 **"output_format_guide"**의 JSON 구조를 엄격히 준수하여 결과를 출력해라.
+        오직 JSON 형식의 텍스트만 응답해.
         `;
 
         parts.push({ text: systemPrompt });
@@ -216,7 +109,7 @@ async function startAnalysis() {
             });
         }
         
-        logsContainer.innerHTML += `<div class="log-item log-info" style="font-weight:bold;">🤖 Google Gemini가 문서를 분석 중입니다...</div>`;
+        logsContainer.innerHTML += `<div class="log-item log-info" style="font-weight:bold;">AI가 문서를 분석 중입니다...</div>`;
         logsContainer.scrollTop = logsContainer.scrollHeight;
 
         aiExtractedData = await callBackendFunction(parts);
