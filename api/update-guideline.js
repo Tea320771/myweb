@@ -12,13 +12,18 @@ export default async function handler(request, response) {
     return response.status(500).json({ error: '서버 설정 오류: 토큰이 없습니다.' });
   }
 
-// 3. 사용자 입력 데이터 받기
-  const { newRule } = request.body;
+  // 3. 사용자 입력 데이터 받기
+  // [FIX] targetFile 파라미터 추가 수신 (어떤 파일을 업데이트할지 결정)
+  const { newRule, targetFile } = request.body;
   
-  // [수정] 하드코딩 제거 -> 환경변수 사용
   const GITHUB_USERNAME = process.env.GITHUB_USERNAME || 'Tea320771'; 
   const REPO_NAME = process.env.GITHUB_REPO_NAME || 'myweb';
-  const FILE_PATH = 'guideline.json';
+  
+  // [FIX] targetFile에 따라 업데이트할 파일 경로 결정 (기본값: guideline.json)
+  // 보안을 위해 허용된 파일명인지 확인 후 적용
+  const ALLOWED_FILES = ['guideline.json', 'reading_guide.json'];
+  const FILE_PATH = (targetFile && ALLOWED_FILES.includes(targetFile)) ? targetFile : 'guideline.json';
+  
   const BRANCH = 'main'; // 브랜치 이름 (보통 main 또는 master)
 
   try {
@@ -34,7 +39,7 @@ export default async function handler(request, response) {
     });
 
     if (!getResponse.ok) {
-      throw new Error('GitHub에서 기존 파일을 찾지 못했습니다.');
+      throw new Error(`GitHub에서 파일(${FILE_PATH})을 찾지 못했습니다.`);
     }
 
     const fileData = await getResponse.json();
@@ -51,7 +56,7 @@ export default async function handler(request, response) {
       jsonContent = [];
     }
 
-    // 기존 내용이 배열이 아니면 배열로 감싸줍니다.
+    // 기존 내용이 배열이 아니면 배열로 감싸줍니다. (새 규칙을 추가하기 위함)
     if (!Array.isArray(jsonContent)) {
       jsonContent = [jsonContent];
     }
@@ -70,7 +75,7 @@ export default async function handler(request, response) {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        message: '🤖 AI 학습: 사용자 피드백 자동 반영', // 커밋 메시지
+        message: `🤖 AI 학습: ${FILE_PATH} 업데이트 (사용자 피드백 반영)`, // 커밋 메시지 동적 변경
         content: updatedContent,
         sha: fileData.sha, // 중요: 아까 받아온 파일의 ID(SHA)를 같이 줘야 덮어쓰기가 됩니다.
         branch: BRANCH
@@ -83,7 +88,7 @@ export default async function handler(request, response) {
     }
 
     // 성공!
-    return response.status(200).json({ success: true, message: '학습 완료! GitHub에 저장되었습니다.' });
+    return response.status(200).json({ success: true, message: `학습 완료! ${FILE_PATH}에 저장되었습니다.` });
 
   } catch (error) {
     console.error(error);
