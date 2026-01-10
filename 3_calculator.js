@@ -1,13 +1,12 @@
 /* ==========================================
    3_calculator.js
-   - [FIX] 파일 끝 문법 오류(중괄호 중복) 수정
-   - [UPDATE] 피신청인별 '내부 분담 비율' 및 '상환 비율' 개별 제어 (슬라이더 지원)
-   - [UPDATE] 판결문 텍스트 기반 자동 비율 파싱 및 적용
+   - [FIX] 파일 중복 내용 제거 및 정리
+   - [UPDATE] 'AI 가르치기' 기능을 위한 전용 모달(Large Input) 추가
    ========================================== */
 
 // 전역 변수: 피신청인별 비율 설정 상태 저장
 let respondentRatioState = {
-    1: [], // 1심: [{internal: 50, external: "1/2"}, ...]
+    1: [], // 1심
     2: [], // 2심
     3: []  // 3심
 };
@@ -132,9 +131,45 @@ function numberToKorean(number) {
 function getRespondentNames() {
     const nameVal = document.getElementById('respondentName').value;
     if (!nameVal) return ["피신청인"];
-    // 번호 제거 (예: "1. 홍길동" -> "홍길동")
     const lines = nameVal.split('\n').filter(line => line.trim() !== "");
     return lines.map(l => l.replace(/^\d+[\.\)]\s*/, '').trim());
+}
+
+// AI 데이터 연동 및 동적 비율 UI 관리 로직
+function applyAIAnalysisToCalculator(data) {
+    initRatioUIs(); 
+
+    for (let i = 1; i <= 3; i++) {
+        const rulingText = data['costRulingText' + i]; 
+        const details = data['costBurdenDetails' + i]; 
+
+        if (rulingText) {
+            const textArea = document.getElementById(`rulingText${i}`);
+            if (textArea) textArea.value = rulingText;
+        }
+
+        if (details && Array.isArray(details) && details.length > 0) {
+            const currentNames = getRespondentNames(); 
+            currentNames.forEach((name, idx) => {
+                const cleanName = name.replace(/\s+/g, '');
+                const matchedItem = details.find(d => {
+                    const cleanDName = d.name.replace(/\s+/g, '');
+                    return cleanName.includes(cleanDName) || cleanDName.includes(cleanName);
+                });
+
+                if (matchedItem) {
+                    if (matchedItem.internalShare !== undefined && matchedItem.internalShare !== null) {
+                        syncSliderInput(i, idx, matchedItem.internalShare);
+                    }
+                    if (matchedItem.reimburseRatio !== undefined && matchedItem.reimburseRatio !== null) {
+                        const extInput = document.getElementById(`ext-${i}-${idx}`);
+                        if (extInput) extInput.value = matchedItem.reimburseRatio;
+                    }
+                }
+            });
+        }
+    }
+    calculateAll();
 }
 
 // 각 심급 카드에 비율 설정 UI 생성
@@ -148,23 +183,19 @@ function createRatioUIForCard(instanceIdx) {
     const card = document.getElementById('card-' + instanceIdx);
     if (!card) return;
 
-    // 기존의 단순 비율 입력칸 숨기기 (또는 제거)
     const oldRatioDiv = document.getElementById('ratio' + instanceIdx)?.closest('.input-group');
     if(oldRatioDiv) oldRatioDiv.style.display = 'none';
 
-    // 비율 설정 컨테이너 찾기 또는 생성
     let container = document.getElementById(`ratio-settings-container-${instanceIdx}`);
     if (!container) {
         container = document.createElement('div');
         container.id = `ratio-settings-container-${instanceIdx}`;
         container.className = 'ratio-settings-box';
-        // 소가 입력칸 바로 아래, 옵션 체크박스 위에 삽입
         const sogaContainer = document.getElementById(`soga-container-${instanceIdx}`);
         const optionsContainer = sogaContainer.querySelector('.options-container');
         sogaContainer.insertBefore(container, optionsContainer);
     }
 
-    // 피신청인 목록 기반 UI 렌더링
     const names = getRespondentNames();
     const count = names.length;
     let html = `
@@ -179,7 +210,7 @@ function createRatioUIForCard(instanceIdx) {
                 <button class="btn-manual-trigger" onclick="autoParseRuling(${instanceIdx})" style="flex:1; padding:5px; font-size:0.8rem; margin-right:5px;">
                     🪄 텍스트로 비율 자동 설정하기
                 </button>
-                <button onclick="window.openFeedbackModal(document.getElementById('rulingText${instanceIdx}').value || '주문 내용 없음')" 
+                <button onclick="openLargeFeedbackModal(${instanceIdx})" 
                         style="background:none; border:none; color:#ef4444; font-size:0.75rem; cursor:pointer; text-decoration:underline; white-space:nowrap;">
                     🚨 결과가 이상한가요? (AI 가르치기)
                 </button>
@@ -188,9 +219,7 @@ function createRatioUIForCard(instanceIdx) {
     `;
 
     names.forEach((name, idx) => {
-        // 기존 상태가 있으면 유지, 없으면 초기값 (내부 1/N, 외부 100%)
         const defaultInternal = Math.floor(100 / count);
-        // 마지막 사람은 나머지 채우기
         const internalVal = (idx === count - 1) ? (100 - (defaultInternal * (count - 1))) : defaultInternal;
         
         html += `
@@ -223,35 +252,29 @@ function createRatioUIForCard(instanceIdx) {
     container.innerHTML = html;
 }
 
-// 슬라이더와 숫자 입력 동기화
 function syncSliderInput(instanceIdx, respIdx, value) {
-    document.getElementById(`slider-${instanceIdx}-${respIdx}`).value = value;
-    document.getElementById(`val-${instanceIdx}-${respIdx}`).value = value;
+    const slider = document.getElementById(`slider-${instanceIdx}-${respIdx}`);
+    const input = document.getElementById(`val-${instanceIdx}-${respIdx}`);
+    if(slider) slider.value = value;
+    if(input) input.value = value;
     calculateAll();
 }
 
-// [핵심] 판결문 텍스트 자동 파싱 함수
 function autoParseRuling(instanceIdx) {
     const textEl = document.getElementById(`rulingText${instanceIdx}`);
     const text = textEl ? textEl.value : "";
     if (!text.trim()) { alert("분석할 판결문 내용을 입력해주세요."); return; }
 
-    const names = getRespondentNames(); // 피신청인 이름 목록
-    const appName = document.getElementById('applicantName').value.trim() || "원고"; // 신청인 이름
-    
-    // 신청인이 원고측인지 피고측인지 판단
+    const names = getRespondentNames(); 
+    const appName = document.getElementById('applicantName').value.trim() || "원고"; 
     const isApplicantPlaintiff = appName.includes("원고") || appName.includes("신청인");
     
-    // 파싱 결과 저장소
-    let internalShares = new Array(names.length).fill(null); // 내부 분담
-    let externalRatios = new Array(names.length).fill(null); // 상환 비율 (신청인이 받을 %)
+    let internalShares = new Array(names.length).fill(null);
+    let externalRatios = new Array(names.length).fill(null); 
 
-    // 1. [전체 문맥 파악] 원고/피고의 일반적인 부담 비율 추출
-    // 예: "소송비용 중 1/4은 원고가, 나머지는 피고가 부담한다"
-    let globalPlaintiffBurden = 0; // 원고가 부담해야 할 비율
-    let globalDefendantBurden = 0; // 피고가 부담해야 할 비율
+    let globalPlaintiffBurden = 0; 
+    let globalDefendantBurden = 0; 
     
-    // 원고 부담 비율 찾기 (예: "원고가 30% 부담", "원고가 4분의 1 부담")
     const regexPlaintiff = /원고.*?(\d+)\s*분\s*의\s*(\d+).*?부담|원고.*?(\d+)%.*?부담/;
     const matchP = text.match(regexPlaintiff);
     if (matchP) {
@@ -259,7 +282,6 @@ function autoParseRuling(instanceIdx) {
         else if (matchP[3]) globalPlaintiffBurden = parseFloat(matchP[3]) / 100.0;
     }
 
-    // 피고 부담 비율 찾기
     const regexDefendant = /피고.*?(\d+)\s*분\s*의\s*(\d+).*?부담|피고.*?(\d+)%.*?부담/;
     const matchD = text.match(regexDefendant);
     if (matchD) {
@@ -267,55 +289,36 @@ function autoParseRuling(instanceIdx) {
         else if (matchD[3]) globalDefendantBurden = parseFloat(matchD[3]) / 100.0;
     }
 
-    // 2. [개별 파싱] 피신청인별 상환 비율(External Ratio) 결정
     names.forEach((name, idx) => {
-        // A. 이름 옆에 직접 명시된 비율이 있는지 확인 (예: "피고 김삼남은 3/4 부담한다")
         const directRegex = new RegExp(`${name}[^0-9a-zA-Z가-힣]{0,30}?(\\d+(?:\\/\\d+|%|\\s*분\\s*의\\s*\\d+))`, "i");
         const matchDirect = text.match(directRegex);
         
         if (matchDirect) {
-            // 직접 명시된 비율이 있으면 그대로 적용
-            // (주의: "4분의 1" 텍스트를 parseRatio 함수가 처리할 수 있도록 그대로 넘김)
             externalRatios[idx] = matchDirect[1]; 
         } else {
-            // B. 직접 명시가 없으면 문맥에 따른 '나머지' 계산
-            // 시나리오 1: 신청인이 [피고]이고, 텍스트에 "원고가 1/4 부담"이라고 적힘
-            // -> 피고(신청인)는 원고(피신청인)에게 1/4을 받을 수 있음 (상대방 부담분 = 내가 받을 돈)
             if (!isApplicantPlaintiff && globalPlaintiffBurden > 0) { 
-                // 피신청인이 원고(김갑동)라면, 원고 부담분(1/4)만큼 청구 가능
-                // 만약 텍스트가 "원고와 피고 사이 비용은 원고가 1/4 부담"이라면, 피고는 1/4 못 받음? 
-                // 아닙니다. 소송비용부담 재판에서 "원고가 X 부담" = "피고는 원고에게 X 청구 가능"
                 externalRatios[idx] = (globalPlaintiffBurden * 100).toFixed(0);
             }
-            // 시나리오 2: 신청인이 [피고]이고, 텍스트에 "피고가 3/4 부담"이라고 적힘
-            // -> 피고(신청인)는 전체 중 3/4을 자기가 내야 하므로, 원고에게는 나머지 1/4만 청구 가능
             else if (!isApplicantPlaintiff && globalDefendantBurden > 0) {
                  let reimbursement = 1.0 - globalDefendantBurden;
                  if (reimbursement < 0) reimbursement = 0;
                  externalRatios[idx] = (reimbursement * 100).toFixed(0);
             }
-            // 시나리오 3: 신청인이 [원고]이고, 텍스트에 "원고가 1/4 부담"이라고 적힘
-            // -> 원고(신청인)는 자기가 1/4 내야 하므로, 피고에게 나머지 3/4 청구 가능
             else if (isApplicantPlaintiff && globalPlaintiffBurden > 0) {
                 let reimbursement = 1.0 - globalPlaintiffBurden;
                 if (reimbursement < 0) reimbursement = 0;
                 externalRatios[idx] = (reimbursement * 100).toFixed(0);
             }
-             // 시나리오 4: "피고들이 각자 부담" 또는 "전부 부담"
             else if (text.includes("피고들이 부담") || text.includes("피고가 부담")) {
-                 if (isApplicantPlaintiff) externalRatios[idx] = "100"; // 원고는 100% 받음
-                 else externalRatios[idx] = "0"; // 피고끼리는 청구 불가(일반적)
+                 if (isApplicantPlaintiff) externalRatios[idx] = "100";
+                 else externalRatios[idx] = "0"; 
             }
-             // 시나리오 5: "원고들이 부담"
             else if (text.includes("원고들이 부담") || text.includes("원고가 부담")) {
-                 if (!isApplicantPlaintiff) externalRatios[idx] = "100"; // 피고는 100% 받음
+                 if (!isApplicantPlaintiff) externalRatios[idx] = "100"; 
             }
         }
     });
 
-    // 3. [내부 분담] 피신청인들 사이의 분담 비율 (기본: 균등 1/N)
-    // 사용자가 요청한 "김갑동 51%, 이을녀 49%" 같은 경우는 텍스트로 파싱하기 매우 복잡하므로
-    // 기본적으로 균등하게 나누고, 필요시 사용자가 슬라이더로 조절하게 둠.
     const equalShare = Math.floor(100 / names.length);
     let remainder = 100;
     
@@ -326,15 +329,11 @@ function autoParseRuling(instanceIdx) {
         return share;
     });
 
-    // UI 반영
     names.forEach((_, idx) => {
         syncSliderInput(instanceIdx, idx, internalShares[idx]);
-        
         const extInput = document.getElementById(`ext-${instanceIdx}-${idx}`);
         if (extInput) {
-            // 값이 있으면 넣고, 없으면 기본값 100
             if (externalRatios[idx] !== null) {
-                // % 기호가 없으면 붙여주거나, parseRatio가 처리할 수 있는 형태인지 확인
                 let val = externalRatios[idx].toString();
                 if (!val.includes('/') && !val.includes('%')) val += "%";
                 extInput.value = val;
@@ -349,18 +348,16 @@ function autoParseRuling(instanceIdx) {
 }
 
 function parseRatio(ratioStr) {
-    if(!ratioStr) return 0; // 빈 값이면 0 처리 (기존 1.0에서 변경)
+    if(!ratioStr) return 0;
     let s = ratioStr.toString().trim();
     if (s === "100" || s === "100%") return 1.0;
     
-    // "4분의 1"
     const koreanFraction = s.match(/(\d+)\s*분\s*의\s*(\d+)/);
     if (koreanFraction) {
         const den = parseFloat(koreanFraction[1]); 
         const num = parseFloat(koreanFraction[2]); 
         return (den !== 0) ? num / den : 0;
     }
-    // "1/4"
     if(s.includes('/')) {
         const parts = s.split('/');
         if(parts.length >= 2) {
@@ -372,13 +369,12 @@ function parseRatio(ratioStr) {
             }
         }
     }
-    // "%" 또는 소수
     const val = parseFloat(s.replace(/[^0-9.]/g, ''));
     if(!isNaN(val)) {
         if(val > 1.0 && val <= 100.0) return val / 100.0; 
         if(val <= 1.0 && val >= 0) return val;
     }
-    return 1.0; // 파싱 실패시 기본 100% 가정 (또는 0)
+    return 1.0; 
 }
 
 function calculateAll() {
@@ -399,7 +395,6 @@ function calculateAll() {
         const cardEl = document.getElementById('card-' + i);
         if (i > 1 && (!cardEl || cardEl.classList.contains('card-hidden') || cardEl.style.display === 'none')) continue; 
         
-        // 1. 전체 인정 비용 계산 (기존 로직)
         const soga = getNumberValue('soga' + i);
         const startFee = getNumberValue('startFee' + i);
         const successFee = getNumberValue('successFee' + i);
@@ -441,29 +436,20 @@ function calculateAll() {
         totalScrivener += sFee; 
         totalCourt += (stamp + service);
 
-        // 2. [UPDATE] 피신청인별 분담액 정밀 계산
-        // 공식: 전체비용 * (내부분담% / 100) * 상환비율
         const instanceTotal = recognizedFee + sFee + stamp + service;
 
         for(let k=0; k<respondentCount; k++) {
-            // UI에서 값 가져오기
             const internalVal = parseFloat(document.getElementById(`val-${i}-${k}`)?.value || 0);
             const externalStr = document.getElementById(`ext-${i}-${k}`)?.value || "100";
             const externalRatio = parseRatio(externalStr);
 
-            // 내부분담액 (전체 비용 중 이 사람이 책임져야 할 몫)
-            // 예: 전체 1000만원 중 피고A의 몫이 50%라면 500만원
             const myShare = instanceTotal * (internalVal / 100.0);
-            
-            // 상환액 (내부분담액 중 신청인에게 줘야 할 비율)
-            // 예: 피고A가 500만원 책임인데, 판결에서 3/4만 부담하라고 했으면 375만원
             const myPayment = Math.floor(myShare * externalRatio);
 
             respondentTotals[k] += myPayment;
         }
     }
     
-    // 3. 결과 출력
     const grandTotalVal = respondentTotals.reduce((a, b) => a + b, 0);
     document.getElementById('grandTotal').innerText = grandTotalVal.toLocaleString() + " 원";
     
@@ -604,209 +590,81 @@ function showContentAndCalculate() {
     const lblW3 = document.querySelector('#withdraw3 + span'); if(lblW3) lblW3.innerText = txt3_withdraw;
 
     if (caseType) { mainContent.classList.remove('hidden'); mainContent.classList.add('fade-in-section'); calculateAll(); }
-/* ==========================================
-   [추가됨] AI 데이터 연동 및 동적 비율 UI 관리 로직
-   ========================================== */
-
-// 1. 피신청인 이름 목록 가져오기
-function getRespondentNames() {
-    const nameVal = document.getElementById('respondentName').value;
-    if (!nameVal) return ["피신청인"];
-    return nameVal.split('\n').filter(l => l.trim() !== "").map(l => l.replace(/^\d+[\.\)]\s*/, '').trim());
 }
 
-// 2. AI 데이터 연동 및 동적 비율 UI 관리 로직
-function applyAIAnalysisToCalculator(data) {
-    initRatioUIs(); // UI(슬라이더 등) 강제 생성
+// ==========================================
+// [NEW] AI 학습(피드백)을 위한 대형 모달 로직
+// ==========================================
 
-    for (let i = 1; i <= 3; i++) {
-        const rulingText = data['costRulingText' + i]; // 프롬프트 필드명
-        const details = data['costBurdenDetails' + i]; // 상세 분담 배열
+// 모달 열기 함수 (버튼 클릭 시 호출)
+function openLargeFeedbackModal(instanceIdx) {
+    // 1. 기존 분석된 판결문 텍스트 가져오기
+    const textEl = document.getElementById(`rulingText${instanceIdx}`);
+    const rulingText = textEl ? textEl.value : "";
 
-        // 판결문 주문 텍스트 채우기
-        if (rulingText) {
-            const textArea = document.getElementById(`rulingText${i}`);
-            if (textArea) textArea.value = rulingText;
-        }
+    // 2. 모달이 DOM에 없으면 동적으로 생성
+    let modal = document.getElementById('ai-feedback-modal');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'ai-feedback-modal';
+        modal.className = 'modal hidden';
+        modal.innerHTML = `
+            <div class="modal-content" style="max-width: 700px;">
+                <div class="modal-header" style="background:var(--color-lawyer); color:white;">
+                    <h3 style="margin:0;">🚨 AI 학습시키기 (오류 신고)</h3>
+                </div>
+                <div class="modal-body" style="padding:20px;">
+                    <p style="color:#4b5563; margin-bottom:15px; font-size:0.95rem;">
+                        AI가 판결문 주문을 잘못 해석했나요?<br>
+                        <strong>올바른 해석 논리를 가르쳐주시면</strong> 즉시 학습하여 다음 분석에 반영합니다.
+                    </p>
 
-        // [수정] 피신청인별 비율 적용 로직 강화
-        if (details && Array.isArray(details) && details.length > 0) {
-            const currentNames = getRespondentNames(); // 현재 입력된 피신청인 이름들
-            
-            currentNames.forEach((name, idx) => {
-                // 이름 매칭 (공백 제거 후 포함 여부 확인으로 유연성 확보)
-                const cleanName = name.replace(/\s+/g, '');
-                
-                const matchedItem = details.find(d => {
-                    const cleanDName = d.name.replace(/\s+/g, '');
-                    return cleanName.includes(cleanDName) || cleanDName.includes(cleanName);
-                });
+                    <label style="font-weight:bold; display:block; margin-bottom:5px; color:#1f2937;">분석 대상 (판결문 주문)</label>
+                    <textarea id="modal-ruling-text" class="form-input" rows="3" readonly 
+                        style="background:#f3f4f6; color:#6b7280; font-size:0.9rem; margin-bottom:15px;"></textarea>
 
-                if (matchedItem) {
-                    // 1. 내부 분담 비율 (Internal Share) 적용
-                    if (matchedItem.internalShare !== undefined && matchedItem.internalShare !== null) {
-                        syncSliderInput(i, idx, matchedItem.internalShare);
-                    }
+                    <label style="font-weight:bold; display:block; margin-bottom:5px; color:#1d4ed8;">어떻게 해석해야 하나요? (정답 논리)</label>
+                    <textarea id="modal-feedback-text" class="form-input" rows="8" 
+                        placeholder="예시: '피고 이을녀는 청구가 전부 기각되었으므로 비용을 100% 부담해야 해. 주문에 별도 언급이 없으면 패소자 부담 원칙을 따라야 해.'"
+                        style="font-size:1rem; padding:10px; border:2px solid #e5e7eb;"></textarea>
                     
-                    // 2. 상환 비율 (Reimburse Ratio) 적용
-                    if (matchedItem.reimburseRatio !== undefined && matchedItem.reimburseRatio !== null) {
-                        const extInput = document.getElementById(`ext-${i}-${idx}`);
-                        if (extInput) {
-                            extInput.value = matchedItem.reimburseRatio;
-                        }
-                    }
-                }
-            });
-        }
-    }
-    // 모든 값 적용 후 최종 계산 수행
-    calculateAll();
-}
-
-// 3. 비율 UI 생성 (슬라이더 + 입력창 + 텍스트영역)
-function initRatioUIs() {
-    for (let i = 1; i <= 3; i++) createRatioUIForCard(i);
-}
-
-function createRatioUIForCard(instanceIdx) {
-    const card = document.getElementById('card-' + instanceIdx);
-    if (!card) return;
-
-    // 기존 비율 입력칸 숨김 (중복 방지)
-    const oldRatioDiv = document.getElementById('ratio' + instanceIdx)?.closest('.input-group');
-    if(oldRatioDiv) oldRatioDiv.style.display = 'none';
-
-    let container = document.getElementById(`ratio-settings-container-${instanceIdx}`);
-    if (!container) {
-        container = document.createElement('div');
-        container.id = `ratio-settings-container-${instanceIdx}`;
-        container.style.marginTop = "15px";
-        container.style.padding = "10px";
-        container.style.border = "1px solid #e5e7eb";
-        container.style.borderRadius = "8px";
-        container.style.backgroundColor = "#fff";
-
-        // 소가 입력칸 아래에 삽입
-        const sogaContainer = document.getElementById(`soga-container-${instanceIdx}`);
-        const optionsContainer = sogaContainer.querySelector('.options-container');
-        sogaContainer.insertBefore(container, optionsContainer);
-    } else {
-        if(container.innerHTML.trim() !== "") return; // 이미 있으면 패스
-    }
-
-    const names = getRespondentNames();
-    const count = names.length;
-
-    let html = `
-        <div style="margin-bottom:10px;">
-            <label style="font-weight:bold; color:#1d4ed8; font-size:0.9rem;">피신청인별 분담 비율 설정 (주문 반영)</label>
-            <textarea id="rulingText${instanceIdx}" class="form-input" rows="2" 
-                placeholder="여기에 판결문 주문(비용 부분)이 들어갑니다. 수정 후 아래 버튼을 누르세요."
-                style="font-size:0.85rem; margin:5px 0; background:#f0fdf4; border:1px solid #16a34a;"></textarea>
-            <button class="btn-manual-trigger" onclick="autoParseRuling(${instanceIdx})" 
-                style="width:100%; padding:6px; font-size:0.8rem; border:1px solid #16a34a; color:#166534; background:#fff;">
-                🔄 텍스트로 비율 자동 재설정
-            </button>
-        </div>
-    `;
-
-    names.forEach((name, idx) => {
-        // 기본값: 1/N 균등 분할
-        const defaultInternal = Math.floor(100 / count);
-        const internalVal = (idx === count - 1) ? (100 - (defaultInternal * (count - 1))) : defaultInternal;
-        
-        html += `
-            <div style="background:#f8fafc; padding:8px; border-radius:6px; margin-bottom:6px; border:1px solid #e2e8f0;">
-                <div style="font-weight:bold; font-size:0.9rem; margin-bottom:4px;">${name}</div>
-                <div style="display:flex; gap:8px; align-items:center;">
-                    <div style="flex:1;">
-                        <label style="font-size:0.75rem; color:#64748b;">내부 분담(%)</label>
-                        <div style="display:flex; align-items:center; gap:4px;">
-                            <input type="range" min="0" max="100" value="${internalVal}" 
-                                id="slider-${instanceIdx}-${idx}" 
-                                oninput="syncSliderInput(${instanceIdx}, ${idx}, this.value)" style="flex:1;">
-                            <input type="number" value="${internalVal}" 
-                                id="val-${instanceIdx}-${idx}" 
-                                onchange="syncSliderInput(${instanceIdx}, ${idx}, this.value)" 
-                                style="width:40px; text-align:center; font-size:0.8rem; border:1px solid #ccc;">
-                        </div>
-                    </div>
-                    <div style="flex:1;">
-                        <label style="font-size:0.75rem; color:#64748b;">상환 비율(신청인에게)</label>
-                        <input type="text" id="ext-${instanceIdx}-${idx}" value="100" 
-                            onkeyup="calculateAll()" placeholder="예: 1/2"
-                            style="width:100%; padding:4px; font-size:0.8rem; border:1px solid #ccc; border-radius:4px;">
+                    <div style="margin-top:20px; display:flex; gap:10px; justify-content:flex-end;">
+                        <button onclick="document.getElementById('ai-feedback-modal').classList.add('hidden')" 
+                                style="padding:10px 20px; background:#e5e7eb; border:none; border-radius:6px; cursor:pointer; font-weight:bold; color:#374151;">
+                            취소
+                        </button>
+                        <button onclick="submitLargeFeedback()" 
+                                style="padding:10px 20px; background:var(--color-lawyer); border:none; border-radius:6px; cursor:pointer; font-weight:bold; color:white;">
+                            학습 정보 제출
+                        </button>
                     </div>
                 </div>
             </div>
         `;
-    });
-    container.innerHTML = html;
+        document.body.appendChild(modal);
+    }
+
+    // 3. 값 세팅 및 모달 표시
+    document.getElementById('modal-ruling-text').value = rulingText || "(주문 내용 없음)";
+    document.getElementById('modal-feedback-text').value = ""; // 초기화
+    modal.classList.remove('hidden');
 }
 
-// 4. 슬라이더/숫자 동기화
-function syncSliderInput(instanceIdx, respIdx, value) {
-    const slider = document.getElementById(`slider-${instanceIdx}-${respIdx}`);
-    const input = document.getElementById(`val-${instanceIdx}-${respIdx}`);
-    if(slider) slider.value = value;
-    if(input) input.value = value;
-    calculateAll();
-}
+// 피드백 제출 함수
+function submitLargeFeedback() {
+    const rulingText = document.getElementById('modal-ruling-text').value;
+    const feedback = document.getElementById('modal-feedback-text').value;
 
-// 5. 텍스트 수정 후 재분석 로직
-function autoParseRuling(instanceIdx) {
-    const textEl = document.getElementById(`rulingText${instanceIdx}`);
-    const text = textEl ? textEl.value : "";
-    if (!text.trim()) { alert("분석할 텍스트가 없습니다."); return; }
+    if (!feedback.trim()) {
+        alert("AI가 학습할 수 있도록 설명을 입력해주세요.");
+        return;
+    }
 
-    const names = getRespondentNames();
-    
-    // 단순 파싱 로직 (이름 옆의 분수/퍼센트 추출)
-    names.forEach((name, idx) => {
-        // 이름 뒤 30자 이내의 비율 찾기
-        const regex = new RegExp(`${name}[^0-9a-zA-Z가-힣]{0,30}?(\\d+[./]\\d+|\\d+%)`, "i");
-        const match = text.match(regex);
-        if (match) {
-            document.getElementById(`ext-${instanceIdx}-${idx}`).value = match[1];
-        }
-    });
-    
-    // 내부 분담은 텍스트 파싱이 어려우므로 균등(1/N)으로 리셋하되 알림 제공
-    const equalShare = Math.floor(100 / names.length);
-    names.forEach((_, idx) => {
-        const val = (idx === names.length - 1) ? (100 - equalShare * (names.length - 1)) : equalShare;
-        syncSliderInput(instanceIdx, idx, val);
-    });
-
-    calculateAll();
-    alert("텍스트를 분석하여 비율을 갱신했습니다.\n(내부 분담 비율은 균등하게 초기화되었습니다)");
-}
-
-// 6. 상세 내역 표시
-function displayRespondentBreakdown(names, totals) {
-    const totalSection = document.querySelector('.total-section');
-    const oldBreakdown = document.getElementById('respondent-breakdown-list');
-    if(oldBreakdown) oldBreakdown.remove();
-
-    if (names.length < 1) return;
-
-    const container = document.createElement('div');
-    container.id = 'respondent-breakdown-list';
-    container.style.marginTop = "10px";
-    container.style.paddingTop = "10px";
-    container.style.borderTop = "1px dashed #ccc";
-    
-    let html = `<div style="font-size:0.85rem; font-weight:bold; color:#555; margin-bottom:5px;">[피신청인별 청구 내역]</div>`;
-    names.forEach((name, idx) => {
-        const amount = totals[idx] || 0;
-        html += `<div style="display:flex; justify-content:space-between; font-size:0.9rem; margin-bottom:3px;">
-                    <span>${name}</span>
-                    <span style="font-weight:bold;">${amount.toLocaleString()} 원</span>
-                 </div>`;
-    });
-    container.innerHTML = html;
-    
-    const bd = document.querySelector('.breakdown');
-    if(bd) totalSection.insertBefore(container, bd);
-}
+    // 1_intro_analysis.js에 있는 전역 함수 호출
+    if (typeof window.processUserFeedback === 'function') {
+        document.getElementById('ai-feedback-modal').classList.add('hidden'); // 모달 닫기
+        window.processUserFeedback(rulingText, feedback);
+    } else {
+        alert("오류: 학습 연결 함수(processUserFeedback)를 찾을 수 없습니다.");
+    }
 }
