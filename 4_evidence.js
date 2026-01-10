@@ -1,14 +1,14 @@
 /* ==========================================
    4_evidence.js
-   - [FIX] '작성 완료(미리보기)' 버튼 이벤트 리스너 추가
+   - [FIX] '작성 완료(미리보기)' 버튼 이벤트 리스너 강화 (readyState 체크)
    - 소명 자료 선택 페이지 로직
    ========================================== */
 
-document.addEventListener('DOMContentLoaded', function() {
+function initEvidencePage() {
     // 5_preview.js로 넘어가는 버튼(btnToPreview)에 이벤트 연결
     const btnPreview = document.getElementById('btnToPreview');
     if (btnPreview) {
-        btnPreview.addEventListener('click', function() {
+        btnPreview.onclick = function() {
             // 5_preview.js에 있는 함수 호출
             if (typeof goToPreview === 'function') {
                 goToPreview();
@@ -25,9 +25,16 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
                 window.scrollTo(0, 0);
             }
-        });
+        };
     }
-});
+}
+
+// DOM 로드 상태 체크 후 실행
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initEvidencePage);
+} else {
+    initEvidencePage();
+}
 
 function goToEvidence() {
     playTransition("이제 거의 다 왔습니다.<br>지출한 소송 비용을 소명할 수 있는 자료를 선택해주세요.", function() {

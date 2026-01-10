@@ -1,7 +1,7 @@
 /* ==========================================
    3_calculator.js
    - [FIX] goToCalculator 함수: playTransition 부재 시 안전 처리
-   - [FIX] '소명 자료 입력하기' 버튼(btnToEvidence) 이벤트 리스너 연결 추가
+   - [FIX] '소명 자료 입력하기' 버튼(btnToEvidence) 이벤트 핸들러 강화 (readyState 체크 및 Fallback)
    - [UPDATE] 'AI 가르치기' 기능을 위한 전용 모달(Large Input) 추가
    ========================================== */
 
@@ -12,23 +12,51 @@ let respondentRatioState = {
     3: []  // 3심
 };
 
-// [FIX] DOM 로드 시 버튼 이벤트 연결 (누락된 부분 추가)
-document.addEventListener('DOMContentLoaded', function() {
+// [FIX] 페이지 로드 시점 문제 해결을 위한 초기화 함수 분리
+function initCalculatorPage() {
     const btnEvidence = document.getElementById('btnToEvidence');
     if (btnEvidence) {
-        btnEvidence.addEventListener('click', function() {
+        // onclick을 사용하여 이벤트 핸들러 강제 할당 (리스너 중복 방지 및 실행 보장)
+        btnEvidence.onclick = function() {
             // 4_evidence.js에 정의된 함수 호출
             if (typeof goToEvidence === 'function') {
                 goToEvidence();
             } else {
-                alert("다음 단계(소명 자료)로 이동하는 함수를 찾을 수 없습니다.");
+                // 함수가 로드되지 않았을 경우 강제 전환 (Fallback 안전 장치)
+                console.warn("goToEvidence function not found. Executing fallback transition.");
+                
+                const calcPage = document.getElementById('calcPage');
+                const evPage = document.getElementById('evidencePage');
+                
+                // 심급별 증빙 자료 그룹 가시성 처리 (goToEvidence 로직 반영)
+                if (typeof getMaxInstanceLevel === 'function') {
+                    const maxLevel = getMaxInstanceLevel();
+                    const g2 = document.getElementById('ev-group-2');
+                    const g3 = document.getElementById('ev-group-3');
+                    if (g2) { if (maxLevel >= 2) g2.classList.remove('hidden'); else g2.classList.add('hidden'); }
+                    if (g3) { if (maxLevel >= 3) g3.classList.remove('hidden'); else g3.classList.add('hidden'); }
+                }
+
+                if(calcPage) calcPage.classList.add('hidden');
+                if(evPage) {
+                    evPage.classList.remove('hidden');
+                    evPage.classList.add('fade-in-section');
+                }
+                window.scrollTo(0, 0);
             }
-        });
+        };
     }
     
     // 초기 계산 상태 확인
     setTimeout(checkCalculatorCompletion, 500);
-});
+}
+
+// DOM 로드 상태 체크 후 실행 (이미 로드된 상태면 즉시 실행)
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initCalculatorPage);
+} else {
+    initCalculatorPage();
+}
 
 function goToCalculator() {
     const appName = document.getElementById('applicantName');
