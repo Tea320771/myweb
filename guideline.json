@@ -1,34 +1,59 @@
-{
-  "description": "추출된 텍스트의 법률적 의미를 해석하고 계산하는(Logic/Interpretation) 지침",
-  "logic_cases": [
-    {
-      "pattern": "각자 부담",
-      "example_text": "소송비용은 원고들이 각자 부담한다.",
-      "interpretation": {
-        "reimburse_ratio": "0 (신청인이 상대방에게 청구할 수 없음)"
+[
+  {
+    "description": "추출된 텍스트의 법률적 의미를 해석하고 계산하는(Logic/Interpretation) 지침",
+    "logic_cases": [
+      {
+        "pattern": "각자 부담",
+        "example_text": "소송비용은 원고들이 각자 부담한다.",
+        "interpretation": {
+          "reimburse_ratio": "0 (신청인이 상대방에게 청구할 수 없음)"
+        }
+      },
+      {
+        "pattern": "특정 비율 명시",
+        "example_text": "소송비용 중 1/3은 원고가, 나머지는 피고가 부담한다.",
+        "interpretation": {
+          "reimburse_ratio": "2/3 (피고 부담분 = 신청인이 받을 돈)"
+        }
+      },
+      {
+        "pattern": "피고 패소 (전부 부담)",
+        "example_text": "소송비용은 피고가 부담한다.",
+        "interpretation": {
+          "internal_share": "피고들 수에 따라 1/N (별도 연대 언급 없을 시)",
+          "reimburse_ratio": "100"
+        }
+      },
+      {
+        "pattern": "사용자 피드백 반영 (패소자 부담 원칙)",
+        "example_text": "주문에 구체적 비율이 없으나 피고 청구가 전부 인용된 경우",
+        "interpretation": {
+          "note": "패소자인 피고가 100% 부담하는 것으로 해석한다."
+        }
       }
-    },
-    {
-      "pattern": "특정 비율 명시",
-      "example_text": "소송비용 중 1/3은 원고가, 나머지는 피고가 부담한다.",
-      "interpretation": {
-        "reimburse_ratio": "2/3 (피고 부담분 = 신청인이 받을 돈)"
-      }
-    },
-    {
-      "pattern": "피고 패소 (전부 부담)",
-      "example_text": "소송비용은 피고가 부담한다.",
-      "interpretation": {
-        "internal_share": "피고들 수에 따라 1/N (별도 연대 언급 없을 시)",
-        "reimburse_ratio": "100"
-      }
-    },
-    {
-      "pattern": "사용자 피드백 반영 (패소자 부담 원칙)",
-      "example_text": "주문에 구체적 비율이 없으나 피고 청구가 전부 인용된 경우",
-      "interpretation": {
-        "note": "패소자인 피고가 100% 부담하는 것으로 해석한다."
-      }
+    ]
+  },
+  {
+    "type": "logic_correction",
+    "description": "피고 김삼남에 대한 원고별 소송비용 분담 비율 적용 (김갑동 75%, 이을녀 100%)",
+    "condition": "defendant.name == '김삼남' AND judgment_text.includes('원고 김갑동이 4분의 1, 나머지는 피고 김삼남이 부담')",
+    "action": {
+      "calculation_method": "specific_plaintiff_split_based_on_partial_ruling",
+      "ratios": [
+        {
+          "plaintiff_name": "김갑동",
+          "defendant_burden": 0.75,
+          "plaintiff_burden": 0.25,
+          "basis": "명시적 판결문 구문 (원고 1/4 부담)"
+        },
+        {
+          "plaintiff_name": "이을녀",
+          "defendant_burden": 1,
+          "plaintiff_burden": 0,
+          "basis": "사용자 지침 기반 묵시적 해석 (김갑동 외 원고에 대해서는 피고 김삼남이 전액 부담)"
+        }
+      ],
+      "note": "판결문이 김갑동에 대해서만 명시적 비율을 제시했으므로, 이을녀에 대해서는 나머지 피고들에 대한 일반 규칙(원고 부담)과 달리 피고 김삼남이 전액 부담하는 것으로 해석함."
     }
-  ]
-}
+  }
+]
