@@ -4,12 +4,24 @@
    ========================================== */
 
 function goToPreview() {
-    playTransition("입력해주신 내용을 토대로<br>PDF 양식에 맞춘 신청서를 작성합니다.", function() {
+    // [FIX] playTransition 함수 존재 여부 확인 후 실행 (없으면 바로 전환)
+    const performTransition = function() {
         document.getElementById('evidencePage').classList.add('hidden');
         renderPreview();
-        const pvPage = document.getElementById('previewPage'); pvPage.classList.remove('hidden'); pvPage.classList.add('fade-in-section');
-        window.scrollTo({ top: 0, behavior: 'smooth' }); updateBackButtonVisibility();
-    });
+        const pvPage = document.getElementById('previewPage'); 
+        if(pvPage) {
+            pvPage.classList.remove('hidden'); 
+            pvPage.classList.add('fade-in-section');
+        }
+        window.scrollTo({ top: 0, behavior: 'smooth' }); 
+        if(typeof updateBackButtonVisibility === 'function') updateBackButtonVisibility();
+    };
+
+    if (typeof playTransition === 'function') {
+        playTransition("입력해주신 내용을 토대로<br>PDF 양식에 맞춘 신청서를 작성합니다.", performTransition);
+    } else {
+        performTransition();
+    }
 }
 
 function renderPreview() {
