@@ -542,9 +542,14 @@ const btnToCaseInfo = document.getElementById('btnToCaseInfo');
 // [추가된 Fix] 버튼 클릭 시 페이지 전환 이벤트 추가
 if(btnToCaseInfo) {
     btnToCaseInfo.addEventListener('click', function() {
-        document.getElementById('introPage').style.display = 'none';
-        document.getElementById('caseInfoPage').style.display = 'block';
-        window.scrollTo(0, 0);
+        // [수정] 2_case_info.js에 정의된 전환 함수 호출 (로직 연동)
+        if (typeof goToCaseInfo === 'function') {
+            goToCaseInfo();
+        } else {
+            document.getElementById('introPage').classList.add('hidden');
+            document.getElementById('caseInfoPage').classList.remove('hidden');
+            window.scrollTo(0, 0);
+        }
     });
 }
 
