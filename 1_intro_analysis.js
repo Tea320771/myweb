@@ -1,8 +1,7 @@
 /* ==========================================
    1_intro_analysis.js
-   - [UPDATE] 다수 당사자(총 인원수) 카운팅 로직 추가
-   - [UPDATE] 복잡한 소송비용 부담 비율(각자 부담 등) 추론 강화
-   - [MAINTAIN] 기존 기능 유지
+   - [UPDATE] 당사자 개별 식별(Array) 및 선택 로직(1 vs Multi) 구현
+   - [UPDATE] 신청인 1명 고정, 피신청인 다수 선택 시 자동 포맷팅
    ========================================== */
 
 // --- 1. 기본 보안 및 초기화 설정 ---
@@ -146,46 +145,35 @@ async function startAnalysis() {
     try {
         let parts = [];
         
-        // [프롬프트 강화] 당사자 수 계산 및 비율 추론 로직 보강
+        // [프롬프트 강화] 당사자 개별 추출 지침 추가
         const systemPrompt = `
         너는 유능한 법률 사무원이야. 제공된 법률 문서 이미지(판결문, 이체내역 등)를 분석해서 소송비용확정신청에 필요한 정보를 JSON 포맷으로 추출해줘.
 
         [분석 지침]
         1. **심급 추론**: 파일명에 '1심', '2심' 등이 있으면 해당 심급으로 처리해라. 불분명하면 'ambiguousAmounts'에 담아라.
            
-        2. **당사자 이름과 주소**: 판결문의 원고, 피고 이름과 **주소**를 정확히 찾아라. 주소는 필수다.
+        2. **당사자 개별 추출 (매우 중요)**:
+           - 원고와 피고가 여러 명일 수 있다. 뭉뚱그려 "김갑동 외 1"로 하지 말고, **모든 사람의 이름과 주소를 각각 추출해라.**
+           - 'plaintiffs' 배열과 'defendants' 배열에 각각 객체 { "name": "...", "addr": "..." } 형태로 담아라.
+           - 주소가 없으면 "주소 미상"이라고 적어라.
         
-        3. **총 당사자 수 계산 (중요)**:
-           - 판결문 당사자(원고, 피고) 목록에서 **사람 수**를 정확히 세어라.
-           - "1. 김갑동, 2. 이을녀" 처럼 번호가 매겨져 있으면 모두 각각 세어라.
-           - 예: 원고 2명 + 피고 3명 = 총 5명. 이 값을 'totalPartyCount'에 정수(Integer)로 담아라.
+        3. **총 당사자 수 계산**: 'totalPartyCount'에 원고 수 + 피고 수를 담아라.
 
-        4. **판결선고일**: 각 심급 판결문의 '판결선고' 날짜를 찾아라.
+        4. **판결선고일, 소가**: 각 심급별로 정확히 추출해라.
         
-        5. **소가**: 
-           - 1심: [청구취지] 금액. 예비적 청구가 있다면 가장 큰 금액.
-           - 2심: [청구취지 및 항소취지] 금액.
-           - 금액은 숫자만 추출.
+        5. **법원명 표준화**: '제xx민사부' 등은 제거해라.
 
-        6. **법원명 표준화**: '제xx민사부' 등 재판부 정보는 제거하고 공식 법원명만 남겨라.
-
-        7. **소송비용 부담 비율 (중요)**:
-           - 주문(主文)에서 소송비용 부담 비율을 찾아라.
-           - "소송비용은 피고들이 부담한다" -> '100'
-           - "원고 김갑동과 피고 사이 비용 중 1/4은 원고가, 나머지는 피고가 부담한다" -> 피고 부담 비율은 '3/4'.
-           - "나머지 피고들에 대한 비용은 원고들이 각자 부담한다" -> 패소자가 비용을 부담하지 않거나(0), 서로 각자 내라는 의미일 수 있다. 하지만 만약 신청인이 승소자 입장에서 받는 비율을 따져야 한다면, '1/2' 또는 '1/N' 등으로 추론될 수 있다.
-           - 주문 내용을 종합하여, **패소자(비용을 물어줘야 할 사람)가 부담해야 할 비율**을 문자열로 추출해라. (예: "100", "2/3", "3/4", "50" 등)
+        6. **소송비용 부담 비율**: 주문을 보고 패소자가 부담할 비율(문자열)을 추출해라.
 
         [JSON 구조]
         {
-          "plaintiffName": "...", "plaintiffAddr": "...",
-          "defendantName": "...", "defendantAddr": "...",
-          "totalPartyCount": 2, 
-          "winnerSide": "...",
+          "plaintiffs": [ { "name": "김갑동", "addr": "서울..." }, { "name": "이을녀", "addr": "..." } ],
+          "defendants": [ { "name": "김삼남", "addr": "..." }, ... ],
+          "totalPartyCount": 5, 
           "courtName1": "...", "caseNo1": "...", "rulingDate1": "...", "startFee1": "...", "successFee1": "...", "soga1": "...", "burdenRatio1": "100",
           "courtName2": "...", "caseNo2": "...", "rulingDate2": "...", "startFee2": "...", "successFee2": "...", "burdenRatio2": "100",
           "courtName3": "...", "caseNo3": "...", "rulingDate3": "...", "startFee3": "...", "successFee3": "...", "burdenRatio3": "100",
-          "ambiguousAmounts": [ {"amount": "금액", "level": "추정심급(없으면 common)"} ]
+          "ambiguousAmounts": [ {"amount": "금액", "level": "추정심급"} ]
         }
         반드시 JSON 형식의 텍스트만 응답해.
         `;
@@ -251,7 +239,7 @@ function fileToBase64(file) {
     });
 }
 
-// --- 5. 데이터 검토 및 이체내역 확인 (모달 연동) ---
+// --- 5. 데이터 검토 및 이체내역 확인 ---
 
 function startDataReview(data) {
     if (data.ambiguousAmounts && data.ambiguousAmounts.length > 0) {
@@ -326,58 +314,137 @@ function resolveFee(action) {
     showFeeReviewModal();
 }
 
-// --- 6. 신청인 확인 및 데이터 주입 ---
+// --- 6. 신청인 확인 및 당사자 선택 로직 (대폭 수정) ---
+
 function showApplicantModal(data) {
-    let extractedPlaintiff = data.plaintiffName || "원고(미확인)";
-    let extractedDefendant = data.defendantName || "피고(미확인)";
+    const appListContainer = document.getElementById('applicant-list-container');
+    const respListContainer = document.getElementById('respondent-list-container');
     
-    document.getElementById('modal-plaintiff-name').innerText = extractedPlaintiff; 
-    document.getElementById('modal-defendant-name').innerText = extractedDefendant;
+    appListContainer.innerHTML = "";
+    respListContainer.innerHTML = "";
+
+    // 원고 목록 생성
+    if (data.plaintiffs && Array.isArray(data.plaintiffs)) {
+        data.plaintiffs.forEach((p, idx) => {
+            const wrapper = document.createElement('div');
+            wrapper.style.marginBottom = "8px";
+            // 신청인은 1명만 선택 (Radio)
+            wrapper.innerHTML = `
+                <label style="display:flex; align-items:center; cursor:pointer;">
+                    <input type="radio" name="selectedApplicant" value='${JSON.stringify({role:'plaintiff', ...p})}' ${idx===0 ? 'checked' : ''} style="margin-right:8px;">
+                    <div>
+                        <div style="font-weight:bold;">[원고] ${p.name}</div>
+                        <div style="font-size:0.8em; color:#666;">${p.addr}</div>
+                    </div>
+                </label>`;
+            appListContainer.appendChild(wrapper.cloneNode(true)); // 왼쪽: 신청인 후보
+            
+            // 피신청인은 여러 명 선택 (Checkbox)
+            const wrapperChk = document.createElement('div');
+            wrapperChk.style.marginBottom = "8px";
+            wrapperChk.innerHTML = `
+                <label style="display:flex; align-items:center; cursor:pointer;">
+                    <input type="checkbox" name="selectedRespondent" value='${JSON.stringify({role:'plaintiff', ...p})}' style="margin-right:8px;">
+                    <div>
+                        <div style="font-weight:bold;">[원고] ${p.name}</div>
+                    </div>
+                </label>`;
+            respListContainer.appendChild(wrapperChk); // 오른쪽: 피신청인 후보
+        });
+    }
+
+    // 피고 목록 생성
+    if (data.defendants && Array.isArray(data.defendants)) {
+        data.defendants.forEach((d, idx) => {
+            const wrapper = document.createElement('div');
+            wrapper.style.marginBottom = "8px";
+            // 신청인 후보
+            wrapper.innerHTML = `
+                <label style="display:flex; align-items:center; cursor:pointer;">
+                    <input type="radio" name="selectedApplicant" value='${JSON.stringify({role:'defendant', ...d})}' style="margin-right:8px;">
+                    <div>
+                        <div style="font-weight:bold;">[피고] ${d.name}</div>
+                        <div style="font-size:0.8em; color:#666;">${d.addr}</div>
+                    </div>
+                </label>`;
+            appListContainer.appendChild(wrapper);
+
+            // 피신청인 후보 (보통 피고가 피신청인이 됨 -> 기본 체크)
+            const wrapperChk = document.createElement('div');
+            wrapperChk.style.marginBottom = "8px";
+            wrapperChk.innerHTML = `
+                <label style="display:flex; align-items:center; cursor:pointer;">
+                    <input type="checkbox" name="selectedRespondent" value='${JSON.stringify({role:'defendant', ...d})}' checked style="margin-right:8px;">
+                    <div>
+                        <div style="font-weight:bold;">[피고] ${d.name}</div>
+                        <div style="font-size:0.8em; color:#666;">${d.addr}</div>
+                    </div>
+                </label>`;
+            respListContainer.appendChild(wrapperChk);
+        });
+    }
     
     document.getElementById('applicant-selection-modal').classList.remove('hidden');
 }
 
-function selectApplicant(selectionSide) {
-    document.getElementById('applicant-selection-modal').classList.add('hidden'); 
-
-    const data = aiExtractedData;
-    const leftName = document.getElementById('modal-plaintiff-name').innerText;
-    const rightName = document.getElementById('modal-defendant-name').innerText;
-
-    let finalAppName = "", finalRespName = "";
+// [NEW] 당사자 선택 완료 및 적용
+function confirmPartySelection() {
+    document.getElementById('applicant-selection-modal').classList.add('hidden');
     
-    if (selectionSide === 'plaintiff') { 
-        finalAppName = leftName; 
-        finalRespName = rightName;
-    } else { 
-        finalAppName = rightName; 
-        finalRespName = leftName;
-    }
-
-    if(finalAppName && !finalAppName.includes("미확인")) setAndTrigger('applicantName', finalAppName);
-    
-    if (selectionSide === 'plaintiff') {
-        if (data.plaintiffAddr) setAndTrigger('applicantAddr', data.plaintiffAddr);
-    } else {
-        if (data.defendantAddr) setAndTrigger('applicantAddr', data.defendantAddr);
-    }
-
-    if(finalRespName && !finalRespName.includes("미확인")) {
-        document.getElementById('step3-area').classList.remove('hidden');
-        document.getElementById('btnToCaseInfo').classList.remove('hidden');
-        setAndTrigger('respondentName', finalRespName);
-        
-        if (selectionSide === 'plaintiff') {
-            if (data.defendantAddr) setAndTrigger('respondentAddr', data.defendantAddr);
-        } else {
-            if (data.plaintiffAddr) setAndTrigger('respondentAddr', data.plaintiffAddr);
+    // 1. 신청인(Applicant) 확인 - 1명
+    const appRadios = document.getElementsByName('selectedApplicant');
+    let selectedApp = null;
+    for(let r of appRadios) {
+        if(r.checked) {
+            selectedApp = JSON.parse(r.value);
+            break;
         }
     }
 
-    fillRemainingData(data);
+    // 2. 피신청인(Respondent) 확인 - 다수 가능
+    const respCheckboxes = document.getElementsByName('selectedRespondent');
+    let selectedResps = [];
+    for(let c of respCheckboxes) {
+        if(c.checked) {
+            selectedResps.push(JSON.parse(c.value));
+        }
+    }
+
+    // 자기 자신을 피신청인으로 선택했는지 방지 (간단 체크)
+    if(selectedApp) {
+        selectedResps = selectedResps.filter(r => r.name !== selectedApp.name);
+    }
+
+    // 3. 데이터 입력
+    if(selectedApp) {
+        setAndTrigger('applicantName', selectedApp.name);
+        setAndTrigger('applicantAddr', selectedApp.addr || "주소 미상");
+    }
+
+    if(selectedResps.length > 0) {
+        document.getElementById('step3-area').classList.remove('hidden');
+        document.getElementById('btnToCaseInfo').classList.remove('hidden');
+        
+        if (selectedResps.length === 1) {
+            // 1명이면 그냥 입력
+            setAndTrigger('respondentName', selectedResps[0].name);
+            setAndTrigger('respondentAddr', selectedResps[0].addr || "주소 미상");
+        } else {
+            // 여러 명이면 번호 매겨서 입력 (예: 1. 김삼남\n2. 김사남)
+            const names = selectedResps.map((r, i) => `${i+1}. ${r.name}`).join('\n');
+            const addrs = selectedResps.map((r, i) => `${i+1}. ${r.addr || "주소 미상"}`).join('\n');
+            setAndTrigger('respondentName', names);
+            setAndTrigger('respondentAddr', addrs);
+        }
+    }
+
+    fillRemainingData(aiExtractedData);
     showManualInput();
-    alert(`AI 분석 완료!\n신청인: ${finalAppName}\n피신청인: ${finalRespName}\n내용이 반영되었습니다.`);
+    
+    const countText = selectedResps.length > 0 ? `${selectedResps.length}명` : "0명";
+    alert(`설정 완료!\n신청인: ${selectedApp ? selectedApp.name : '미선택'}\n피신청인: ${countText}`);
 }
+
 
 function fillRemainingData(data) {
     if(data.caseNo2 || data.courtName2 || data.startFee2) {
@@ -412,7 +479,7 @@ function fillRemainingData(data) {
     if(data.successFee3) setAndTrigger('successFee3', data.successFee3);
     if(data.burdenRatio3) setAndTrigger('ratio3', data.burdenRatio3);
 
-    // [NEW] 총 당사자 수(partyCount) 자동 입력
+    // 총 당사자 수 자동 입력
     if (data.totalPartyCount && data.totalPartyCount > 0) {
         setAndTrigger('partyCount', data.totalPartyCount);
     }
@@ -427,6 +494,11 @@ function setAndTrigger(id, value) {
         el.dispatchEvent(new Event('change', { bubbles: true }));
         if (id.includes('Fee') || id.includes('soga') || id.includes('ratio') || id === 'partyCount') {
              el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
+        }
+        // Textarea 자동 높이 조절 (다수 당사자 입력 시)
+        if (id === 'respondentName' || id === 'respondentAddr') {
+            el.style.height = 'auto';
+            el.style.height = (el.scrollHeight) + 'px';
         }
     }
     if (typeof calculateAll === 'function') calculateAll();
