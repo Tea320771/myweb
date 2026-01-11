@@ -1,5 +1,6 @@
 /* ==========================================
    2_case_info.js
+   - [FIX] 뒤로가기 시 introPage 화면 미출력 문제 해결 (goBackStep 패치 추가)
    - [FIX] 이벤트 리스너 등록 타이밍 문제 해결 (readyState 체크)
    - [FIX] 계산기 이동 및 AI 데이터 전달 로직 강화
    ========================================== */
@@ -212,3 +213,39 @@ function setupAutocomplete(inputId, listId) {
         if (e.target !== input && e.target !== list) { closeList(); } 
     });
 }
+
+/* ==========================================
+   [FIX] Global Back Button Logic Patch
+   - 1_intro_analysis.js에서 설정된 style.display='none'이 
+     뒤로가기 시 해제되지 않는 문제를 해결하기 위해
+     goBackStep 함수를 재정의(Wrapping)합니다.
+   ========================================== */
+(function() {
+    // 기존 goBackStep 함수 저장
+    const originalGoBack = window.goBackStep;
+
+    // goBackStep 재정의
+    window.goBackStep = function() {
+        // 1. 기존 뒤로가기 수행 (페이지 전환 및 hidden 클래스 제거)
+        if (typeof originalGoBack === 'function') {
+            originalGoBack();
+        }
+
+        // 2. IntroPage로 돌아왔을 때, 화면이 보이지 않는 문제(style.display='none') 해결
+        const intro = document.getElementById('introPage');
+        if (intro && !intro.classList.contains('hidden')) {
+            // style.display가 none으로 박혀있다면 block으로 복구
+            if (intro.style.display === 'none') {
+                intro.style.display = 'block';
+            }
+            // 메인 컨테이너 투명도가 0이 되어있을 경우를 대비해 복구
+            const container = document.getElementById('mainContainer');
+            if (container) container.style.opacity = '1';
+        }
+
+        // 3. 버튼 상태 업데이트 (Intro 화면에서는 뒤로가기 버튼 숨김)
+        if (typeof updateBackButtonVisibility === 'function') {
+            updateBackButtonVisibility();
+        }
+    };
+})();
