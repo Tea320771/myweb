@@ -998,3 +998,59 @@ async function saveToSpecificFile(jsonRule, filename) {
         throw new Error("서버 저장 실패: " + errText);
     }
 }
+// ==========================================
+// [NEW] 뒤로가기 버튼 기능 (전역 함수)
+// ==========================================
+
+// 1. 뒤로가기 실행 함수
+window.goBackStep = function() {
+    const pages = ['introPage', 'caseInfoPage', 'calcPage', 'evidencePage', 'previewPage'];
+    let visibleIndex = -1;
+
+    // 현재 보이는 페이지 찾기
+    for (let i = 0; i < pages.length; i++) {
+        const el = document.getElementById(pages[i]);
+        if (el && !el.classList.contains('hidden') && el.style.display !== 'none') {
+            visibleIndex = i;
+            break;
+        }
+    }
+
+    // 첫 페이지(introPage)거나 페이지를 못 찾으면 중단
+    if (visibleIndex <= 0) return;
+
+    // 현재 페이지 숨기고, 이전 페이지 보이기
+    const currentId = pages[visibleIndex];
+    const prevId = pages[visibleIndex - 1];
+
+    document.getElementById(currentId).classList.add('hidden');
+    
+    const prevEl = document.getElementById(prevId);
+    if (prevEl) {
+        prevEl.classList.remove('hidden');
+        prevEl.classList.add('fade-in-section');
+        
+        // 만약 이전 페이지가 '계산기'라면 비율 UI 등이 깨지지 않게 flex 설정 강제
+        if (prevId === 'calcPage') prevEl.style.display = 'block';
+    }
+
+    // 스크롤 최상단으로 이동
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+
+    // 버튼 상태 업데이트 (Intro로 돌아가면 버튼 숨김)
+    updateBackButtonVisibility();
+};
+
+// 2. 버튼 보이기/숨기기 관리 함수
+window.updateBackButtonVisibility = function() {
+    const btn = document.getElementById('globalBackBtn');
+    const intro = document.getElementById('introPage');
+    if (!btn) return;
+
+    // Intro 페이지가 보이면 버튼 숨김, 아니면 보임
+    if (intro && !intro.classList.contains('hidden') && intro.style.display !== 'none') {
+        btn.classList.remove('visible'); // 스타일 클래스로 제어
+    } else {
+        btn.classList.add('visible');
+    }
+};
