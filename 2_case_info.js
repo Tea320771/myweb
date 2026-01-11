@@ -89,6 +89,7 @@ function goToCaseInfo() {
         casePage.classList.remove('hidden'); 
         casePage.classList.add('fade-in-section');
         window.scrollTo({ top: 0, behavior: 'smooth' });
+        if (typeof updateBackButtonVisibility === 'function') updateBackButtonVisibility();
         
         checkCaseInfoStep();
         updateBackButtonVisibility();

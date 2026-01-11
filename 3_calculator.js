@@ -108,6 +108,7 @@ function goToCalculator() {
         
         // [NEW] 진입 시 피신청인 비율 UI 초기화
         initRatioUIs();
+        if (typeof updateBackButtonVisibility === 'function') updateBackButtonVisibility();
     };
 
     // playTransition이 있으면 쓰고, 없으면 바로 전환
