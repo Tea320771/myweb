@@ -289,8 +289,8 @@ function createRatioUIForCard(instanceIdx) {
             <textarea id="rulingText${instanceIdx}" class="form-input" rows="2" 
                 placeholder="여기에 판결문 주문(소송비용 부분)을 붙여넣으면 비율이 자동 설정됩니다."
                 style="font-size:0.85rem; padding:8px; margin-bottom:5px;"></textarea>
-            <div style="display:flex; justify-content:space-between; align-items:center;">
-                <button class="btn-manual-trigger" onclick="autoParseRuling(${instanceIdx})" style="flex:1; padding:5px; font-size:0.8rem; margin-right:5px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap: 8px;">
+                <button class="btn-manual-trigger" onclick="autoParseRuling(${instanceIdx})" style="flex:1; padding:6px 10px; font-size:0.8rem; border-radius:4px; margin-right:0;">
                     🪄 텍스트로 비율 자동 설정하기
                 </button>
                 <button onclick="openLargeFeedbackModal(${instanceIdx})" 
@@ -325,7 +325,7 @@ function createRatioUIForCard(instanceIdx) {
                         </div>
                     </div>
                     <div style="flex:1;">
-                        <label style="font-size:0.75rem; color:#64748b;">상환 비율 (신청인에게 줄 %)</label>
+                        <label style="font-size:0.75rem; color:#64748b;">피신청인이 신청인에게 부담할 소송비용 부담비율</label>
                         <input type="text" class="external-ratio form-input" id="ext-${instanceIdx}-${idx}" 
                             value="100" placeholder="예: 100, 1/2" onkeyup="calculateAll()"
                             style="padding:4px; text-align:center;">
