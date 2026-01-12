@@ -703,94 +703,8 @@ async function saveToGitHub(jsonRule) {
         throw new Error("서버 저장 실패");
     }
 }
-/* ==========================================
-   [NEW] AI 학습(피드백) 및 가이드라인 업데이트 로직
-   (1_intro_analysis.js 파일의 맨 마지막에 붙여넣으세요)
-   ========================================== */
 
-// 1. 피드백 입력창 띄우기 (3_calculator.js에서 호출됨)
-function openFeedbackModal(rulingText) {
-    // 텍스트가 너무 길면 앞부분만 잘라서 보여줌
-    const shortText = rulingText.length > 50 ? rulingText.substring(0, 50) + "..." : rulingText;
-    
-    const feedback = prompt(
-        `[AI 학습시키기]\n판결문 주문: "${shortText}"\n\nAI가 이 주문을 어떻게 해석했어야 하나요?\n(예: "피고 이을녀는 청구가 기각되었으니 비용을 100% 부담해야 해")`
-    );
-
-    if (feedback && feedback.trim() !== "") {
-        processUserFeedback(rulingText, feedback);
-    }
-}
-
-// 2. AI에게 '사용자 피드백'을 'JSON 규칙'으로 변환 요청 -> 서버 저장 요청
-async function processUserFeedback(rulingText, userExplanation) {
-    const logsContainer = document.getElementById('processing-logs');
-    
-    // 로그 UI가 보이지 않는 경우(계산기 화면 등)를 대비해 알림 표시
-    const isLogVisible = logsContainer && logsContainer.offsetParent !== null;
-    if (isLogVisible) {
-        logsContainer.innerHTML += `<div class="log-item log-info">🧠 사용자 피드백을 학습 데이터로 변환 중...</div>`;
-        logsContainer.scrollTop = logsContainer.scrollHeight;
-    } else {
-        alert("AI가 새로운 규칙을 학습하고 있습니다... 잠시만 기다려주세요.");
-    }
-
-    // [메타 프롬프트] Gemini에게 '판결문'과 '사용자 해석'을 주고 'JSON 규칙'을 만들라고 지시
-    const metaPrompt = `
-    역할: 너는 법률 AI 학습 데이터 생성기다.
-    목표: 사용자가 제공한 '판결문 주문'과 '올바른 해석 논리'를 바탕으로, 시스템이 앞으로 참고할 'guideline.json' 규칙 객체를 생성하라.
-
-    [입력 데이터]
-    1. 판결 주문 텍스트: "${rulingText}"
-    2. 사용자의 정답 논리: "${userExplanation}"
-
-    [생성해야 할 JSON 포맷]
-    {
-      "type": "user_feedback_rule",
-      "description": "사용자 피드백에 기반한 동적 생성 규칙",
-      "example_case": {
-        "ruling_text": "${rulingText.replace(/"/g, "'").substring(0, 80)}...", 
-        "user_logic": "${userExplanation.replace(/"/g, "'")}"
-      },
-      "step_by_step_reasoning": [
-        "1단계: [주문 분석] 주문 텍스트 내의 키워드(예: '각자 부담', '4분의 1' 등)를 식별한다.",
-        "2단계: [사용자 논리 적용] '${userExplanation}'의 논리에 따라, 특정 피고의 내부 분담 비율이나 상환 비율을 도출한다.",
-        "3단계: [결론 도출] 따라서 해당 피고의 비용 부담 비율을 확정한다."
-      ],
-      "ideal_output_structure": {
-         "note": "향후 유사한 주문 패턴(키워드 포함)이 발견되면 위 논리를 우선 적용할 것."
-      }
-    }
-
-    제약사항:
-    - 오직 유효한 JSON 객체 1개만 출력할 것.
-    - 마크다운(backticks) 없이 순수 텍스트로 출력할 것.
-    `;
-
-    try {
-        // 기존 callBackendFunction 재사용 (텍스트만 전송)
-        const parts = [{ text: metaPrompt }];
-        const newRuleJson = await callBackendFunction(parts); 
-
-        console.log("[AI 학습] 생성된 새 규칙:", newRuleJson);
-        
-        // 생성된 규칙을 GitHub(또는 DB)에 저장
-        await saveToGitHub(newRuleJson);
-        
-        if (isLogVisible) {
-            logsContainer.innerHTML += `<div class="log-item log-success">✨ 학습 완료! 가이드라인이 업데이트되었습니다.</div>`;
-        }
-        alert("학습 완료!\nAI가 당신의 가르침을 저장소(guideline.json)에 기록했습니다.\n다음 분석부터는 이 규칙이 적용됩니다.");
-
-    } catch (e) {
-        console.error(e);
-        const errorMsg = "학습 처리 중 오류가 발생했습니다: " + e.message;
-        if (isLogVisible) logsContainer.innerHTML += `<div class="log-item log-error">❌ ${errorMsg}</div>`;
-        else alert(errorMsg);
-    }
-}
-
-// 3. 서버 API(/api/update-guideline)를 호출하여 JSON 저장
+// 서버 API(/api/update-guideline)를 호출하여 JSON 저장
 async function saveToGitHub(jsonRule) {
     const response = await fetch('/api/update-guideline', {
         method: "POST",
@@ -805,8 +719,6 @@ async function saveToGitHub(jsonRule) {
 }
 
 // [중요] 3_calculator.js 등 다른 스크립트에서 호출할 수 있도록 전역 객체(window)에 등록
-window.openFeedbackModal = openFeedbackModal;
-window.processUserFeedback = processUserFeedback;
 window.saveToGitHub = saveToGitHub;
 /* ==========================================
    [DEBUG] 디버그 모드 및 가이드라인 수정 기능
