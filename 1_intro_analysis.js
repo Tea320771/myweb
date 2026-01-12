@@ -849,8 +849,11 @@ async function runLogicComparison() {
         const file = queuedFiles[0];
         const base64 = await fileToBase64(file);
 
-        // /api/rag-train 호출 (step: 'analyze' 모드 활용)
-        const response = await fetch('/api/rag-train', {
+         // [수정] 상대 경로('/api/rag-train')를 -> '절대 경로(https://...)'로 변경
+        // 주의: 아래 주소를 실제 rag-train.js가 배포된 Vercel 주소로 바꿔주세요!
+        const BACKEND_URL = "https://legal-rag-system-five.vercel.app/api/rag-train"; 
+
+        const response = await fetch(BACKEND_URL, {  // <-- 변수 사용
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -858,7 +861,7 @@ async function runLogicComparison() {
                 fileBase64: base64,
                 mimeType: file.type,
                 fileName: file.name,
-                docType: 'judgment' // 기본적으로 판결문으로 가정
+                docType: 'judgment'
             })
         });
 
