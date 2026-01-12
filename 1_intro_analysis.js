@@ -731,11 +731,16 @@ window.addEventListener('DOMContentLoaded', function() {
     createDebugUI();
 });
 
+// 1_intro_analysis.js 내부의 createDebugUI 함수를 이걸로 교체하세요.
+
 function createDebugUI() {
-    // 1-1. 디버그 플로팅 버튼 생성
+    // 1-1. 디버그 플로팅 버튼 생성 (기존과 동일)
+    const existingBtn = document.getElementById('debug-analysis-btn');
+    if (existingBtn) existingBtn.remove(); // 중복 방지
+
     const debugBtn = document.createElement('button');
     debugBtn.id = 'debug-analysis-btn';
-    debugBtn.innerHTML = '🐞 Debug Extraction';
+    debugBtn.innerHTML = '🐞 Debug Analysis';
     debugBtn.style.cssText = `
         position: fixed; bottom: 20px; left: 20px; z-index: 9999;
         background-color: #4b5563; color: white; border: none;
@@ -748,60 +753,167 @@ function createDebugUI() {
     debugBtn.onclick = openDebugModal;
     document.body.appendChild(debugBtn);
 
-    // 1-2. 디버그 모달 생성
+    // 1-2. 디버그 모달 생성 (UI 확장됨)
     const modalHtml = `
     <div id="debug-modal" class="modal hidden" style="z-index: 10000;">
-        <div class="modal-content" style="max-width: 800px; max-height: 90vh; overflow-y: auto;">
-            <div class="modal-header" style="background: #374151; color: white; display:flex; justify-content:space-between; align-items:center;">
-                <h3>🐞 AI 분석 결과 디버깅</h3>
-                <button onclick="document.getElementById('debug-modal').classList.add('hidden')" style="background:none; border:none; color:white; font-size:1.2rem; cursor:pointer;">✕</button>
+        <div class="modal-content" style="max-width: 95%; width: 1000px; max-height: 95vh; overflow-y: auto; display:flex; flex-direction:column;">
+            
+            <div class="modal-header" style="background: #374151; color: white; display:flex; justify-content:space-between; align-items:center; padding: 15px;">
+                <h3 style="margin:0;">🐞 AI 심층 디버깅 (Extraction & Logic Check)</h3>
+                <button onclick="document.getElementById('debug-modal').classList.add('hidden')" style="background:none; border:none; color:white; font-size:1.5rem; cursor:pointer;">✕</button>
             </div>
-            <div class="modal-body">
-                <div style="margin-bottom: 15px;">
-                    <label style="font-weight:bold; display:block; margin-bottom:5px;">🔍 현재 추출된 데이터 (window.aiExtractedData)</label>
-                    <textarea id="debug-json-viewer" class="form-input" rows="10" readonly 
-                        style="font-family: monospace; font-size: 0.85rem; background: #f3f4f6; color: #1f2937;"></textarea>
+
+            <div class="modal-body" style="padding: 20px; flex:1;">
+                
+                <div style="margin-bottom: 20px; border-bottom: 2px solid #e5e7eb; padding-bottom: 20px;">
+                    <label style="font-weight:bold; display:block; margin-bottom:5px; color:#1f2937;">🔍 현재 UI에 적용된 데이터 (window.aiExtractedData)</label>
+                    <textarea id="debug-json-viewer" class="form-input" rows="6" readonly 
+                        style="font-family: monospace; font-size: 0.85rem; background: #f3f4f6; color: #1f2937; border:1px solid #d1d5db;"></textarea>
                 </div>
                 
-                <div style="border-top: 1px dashed #ccc; padding-top: 15px; margin-top: 15px;">
-                    <h4 style="color: #dc2626; margin-bottom: 10px;">🚨 결과가 잘못되었나요? 지침을 추가하세요.</h4>
-                    
-                    <div style="margin-bottom: 10px;">
-                        <label style="font-weight:bold; margin-right: 10px;">수정 대상 파일:</label>
-                        <select id="debug-target-file" style="padding: 5px; border-radius: 4px; border: 1px solid #ccc;">
-                            <option value="reading_guide.json">📂 Reading Guide (텍스트 추출/오타/포맷 관련)</option>
-                            <option value="guideline.json">🧠 Logic Guide (계산/비율/판단 기초적 논리 관련)</option>
-                            <option value="rag_db">💾 RAG Database (추출된 문구에 대한 구체적 해석 관련)</option>
+                <div style="background: #f9fafb; padding: 15px; border-radius: 8px; border: 1px solid #e5e7eb;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                        <h4 style="margin:0; color: #4f46e5;">⚖️ 논리 검증 (Logic Comparison)</h4>
+                        <button onclick="runLogicComparison()" id="btn-run-debug" class="btn-start" style="margin:0; padding: 8px 16px; font-size: 0.9rem; background-color: #4f46e5;">
+                            ▶️ 비교 분석 실행 (Baseline vs RAG)
+                        </button>
+                    </div>
+                    <p style="font-size:0.85rem; color:#6b7280; margin-bottom:10px;">
+                        서버의 최신 규칙(Guideline)과 RAG DB를 사용하여 문서를 다시 해석합니다. (약 5~10초 소요)
+                    </p>
+
+                    <div style="display:flex; gap: 15px;">
+                        <div style="flex:1;">
+                            <div style="font-weight:bold; color:#475569; margin-bottom:5px;">🧩 [Baseline] 규칙만 적용</div>
+                            <div id="debug-baseline-result" style="height: 250px; overflow-y:auto; background:white; border:1px solid #cbd5e1; padding:10px; border-radius:4px; font-family:monospace; font-size:0.85rem; white-space:pre-wrap; color:#334155;">(분석 실행 버튼을 눌러주세요)</div>
+                        </div>
+                        <div style="flex:1;">
+                            <div style="font-weight:bold; color:#7c3aed; margin-bottom:5px;">🔮 [RAG Enhanced] 규칙 + DB 적용</div>
+                            <div id="debug-rag-result" style="height: 250px; overflow-y:auto; background:#f5f3ff; border:1px solid #8b5cf6; padding:10px; border-radius:4px; font-family:monospace; font-size:0.85rem; white-space:pre-wrap; color:#4c1d95;">(분석 실행 버튼을 눌러주세요)</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div style="margin-top: 20px; border-top: 2px solid #e5e7eb; padding-top: 20px;">
+                    <h4 style="color: #dc2626; margin-bottom: 10px;">🚨 교정 및 학습 (Feedback)</h4>
+                    <div style="display:flex; gap:10px; margin-bottom:10px;">
+                        <select id="debug-target-file" style="padding: 8px; border-radius: 4px; border: 1px solid #ccc; flex:1;">
+                            <option value="rag_db">💾 RAG Database (해석 논리 저장)</option>
+                            <option value="guideline.json">🧠 Logic Guide (계산 공식 수정)</option>
+                            <option value="reading_guide.json">📂 Reading Guide (오타/추출 수정)</option>
                         </select>
                     </div>
-
-                    <textarea id="debug-instruction" class="form-input" rows="4" 
-                        placeholder="예: '원고 이름이 OOO로 잘못 추출됨. 이름 뒤에 (주)가 붙으면 법인으로 인식해야 해.' 또는 '이런 주문 패턴에서는 피고 분담 비율을 1/n로 계산해야 해.'"></textarea>
+                    <textarea id="debug-instruction" class="form-input" rows="3" 
+                        placeholder="위 비교 결과를 보고, 올바른 해석 방법을 문장으로 적어주세요. (예: '이런 주문 패턴은 피고들이 연대하여 지급하는 것이므로 비율은 1/n이다.')"></textarea>
                     
-                    <button onclick="submitDebugFeedback()" class="btn-start" style="margin-top: 10px; background-color: #dc2626;">
-                        🛠️ 지침 적용 및 가이드라인 업데이트
+                    <button onclick="submitDebugFeedback()" class="btn-start" style="margin-top: 10px; background-color: #dc2626; width: 100%;">
+                        🛠️ 지침 적용 및 학습시키기
                     </button>
                 </div>
+
             </div>
         </div>
     </div>
     `;
     
+    // 기존 모달 제거 후 새로 추가
+    const existingModal = document.getElementById('debug-modal');
+    if (existingModal) existingModal.parentElement.remove();
+
     const div = document.createElement('div');
     div.innerHTML = modalHtml;
     document.body.appendChild(div.firstElementChild);
 }
 
-// 2. 디버그 모달 열기
+// 2. 비교 분석 실행 함수
+async function runLogicComparison() {
+    if (!queuedFiles || queuedFiles.length === 0) {
+        alert("업로드된 파일이 없습니다. 파일을 먼저 추가해주세요.");
+        return;
+    }
+
+    const btn = document.getElementById('btn-run-debug');
+    const baselineArea = document.getElementById('debug-baseline-result');
+    const ragArea = document.getElementById('debug-rag-result');
+
+    // 로딩 상태 표시
+    btn.disabled = true;
+    btn.innerText = "⏳ 분석 중...";
+    baselineArea.innerText = "분석 중...";
+    baselineArea.style.opacity = "0.5";
+    ragArea.innerText = "분석 중...";
+    ragArea.style.opacity = "0.5";
+
+    try {
+        // 첫 번째 파일을 기준으로 분석 (대표 파일)
+        const file = queuedFiles[0];
+        const base64 = await fileToBase64(file);
+
+        // /api/rag-train 호출 (step: 'analyze' 모드 활용)
+        const response = await fetch('/api/rag-train', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                step: 'analyze',
+                fileBase64: base64,
+                mimeType: file.type,
+                fileName: file.name,
+                docType: 'judgment' // 기본적으로 판결문으로 가정
+            })
+        });
+
+        const result = await response.json();
+
+        if (!result.success) throw new Error(result.error || "분석 실패");
+
+        // 결과 표시 (JSON 포맷팅)
+        const formatJSON = (data) => {
+             if (typeof data === 'string') return data;
+             return JSON.stringify(data, null, 2);
+        };
+
+        baselineArea.innerText = formatJSON(result.data.analysis_baseline);
+        ragArea.innerText = formatJSON(result.data.analysis_rag);
+
+    } catch (e) {
+        console.error(e);
+        baselineArea.innerText = "❌ 오류 발생: " + e.message;
+        ragArea.innerText = "❌ 오류 발생: " + e.message;
+    } finally {
+        // UI 복구
+        btn.disabled = false;
+        btn.innerText = "▶️ 비교 분석 실행 (Baseline vs RAG)";
+        baselineArea.style.opacity = "1";
+        ragArea.style.opacity = "1";
+    }
+}
+
+// 3. 디버그 모달 열기 (기존 함수 교체)
 function openDebugModal() {
+    // 1. 현재 데이터 표시
     const jsonViewer = document.getElementById('debug-json-viewer');
     const data = window.aiExtractedData || { message: "아직 분석된 데이터가 없습니다." };
-    
     jsonViewer.value = JSON.stringify(data, null, 2);
+
+    // 2. [추가됨] 비교 분석 결과창 초기화 (창을 열 때마다 깨끗하게 비워줌)
+    const baselineArea = document.getElementById('debug-baseline-result');
+    const ragArea = document.getElementById('debug-rag-result');
+    
+    // 요소가 존재할 때만 초기화 (에러 방지)
+    if (baselineArea) {
+        baselineArea.innerText = "(분석 실행 버튼을 눌러주세요)";
+        baselineArea.style.opacity = "1";
+    }
+    if (ragArea) {
+        ragArea.innerText = "(분석 실행 버튼을 눌러주세요)";
+        ragArea.style.opacity = "1";
+    }
+
+    // 4. 모달 보여주기
     document.getElementById('debug-modal').classList.remove('hidden');
 }
 
-// 3. 디버그 피드백 제출 및 AI 처리
+// 5. 디버그 피드백 제출 및 AI 처리
 async function submitDebugFeedback() {
     const targetFile = document.getElementById('debug-target-file').value;
     const instruction = document.getElementById('debug-instruction').value; // 사용자의 수정 지시
