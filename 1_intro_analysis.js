@@ -27,12 +27,13 @@ window.addEventListener('DOMContentLoaded', function() {
 });
 
 // --- 전역 변수 ---
-let queuedFiles = [];       
-// [FIX] 전역 접근 가능하도록 window 객체에 할당
+// [수정] 어디서든 접근 가능하도록 window 객체에 할당
+window.queuedFiles = [];       
 window.aiExtractedData = {};   
+
 const pageOrder = ['introPage', 'caseInfoPage', 'calcPage', 'evidencePage', 'previewPage'];
-const LOGIC_GUIDE_URL = 'guideline.json';       // 해석/논리 지침
-const READING_GUIDE_URL = 'reading_guide.json'; // 추출/읽기/포맷 지침
+const LOGIC_GUIDE_URL = 'guideline.json';       
+const READING_GUIDE_URL = 'reading_guide.json';
 /* ==========================================
    [추가됨] 드래그 앤 드롭 및 파일 처리 로직
    ========================================== */
@@ -69,9 +70,9 @@ function setupDragAndDrop() {
 function queueFiles(files) {
     if (!files || files.length === 0) return;
     
-    // 파일 배열에 추가
+    // [수정] window.queuedFiles에 추가
     for (let i = 0; i < files.length; i++) {
-        queuedFiles.push(files[i]);
+        window.queuedFiles.push(files[i]);
     }
     
     updateFileQueueUI();
@@ -84,7 +85,8 @@ function updateFileQueueUI() {
     
     list.innerHTML = "";
     
-    if (queuedFiles.length > 0) {
+    // [수정] window.queuedFiles 참조
+    if (window.queuedFiles.length > 0) {
         list.classList.remove('hidden');
         actionArea.classList.remove('hidden');
         uploadContent.style.display = 'none'; 
@@ -94,10 +96,9 @@ function updateFileQueueUI() {
         uploadContent.style.display = 'block';
     }
 
-    queuedFiles.forEach((file, index) => {
+    window.queuedFiles.forEach((file, index) => {
         const item = document.createElement('div');
         item.className = 'file-queue-item';
-        // 스타일은 style.css에 정의된 것을 따름
         item.innerHTML = `
             <div style="display:flex; align-items:center;">
                 <span style="margin-right:8px;">📄</span>
@@ -110,7 +111,7 @@ function updateFileQueueUI() {
 }
 
 function removeFile(index) {
-    queuedFiles.splice(index, 1);
+    window.queuedFiles.splice(index, 1);
     updateFileQueueUI();
     // input value 초기화 (같은 파일 재업로드 가능하게)
     const input = document.getElementById('docInput');
@@ -118,7 +119,7 @@ function removeFile(index) {
 }
 /* ========================================== */
 async function startAnalysis() {
-    if (queuedFiles.length === 0) { alert("분석할 파일이 없습니다."); return; }
+    if (window.queuedFiles.length === 0) { alert("분석할 파일이 없습니다."); return; }
     
     const actionArea = document.getElementById('action-area');
     const logsContainer = document.getElementById('processing-logs');
@@ -183,8 +184,8 @@ async function startAnalysis() {
 
         parts.push({ text: systemPrompt });
 
-        for (let i = 0; i < queuedFiles.length; i++) {
-            const file = queuedFiles[i];
+        for (let i = 0; i < window.queuedFiles.length; i++) {
+            const file = window.queuedFiles[i];
             logsContainer.innerHTML += `<div class="log-item log-info">📂 파일 읽는 중... (${file.name})</div>`;
             const base64Data = await fileToBase64(file);
             parts.push({ text: `[파일정보: ${file.name}]` });
