@@ -1,8 +1,8 @@
 /* ==========================================
    /api/analyze.js
-   - 기능 1: Static Context (서버의 JSON 가이드라인 읽기)
-   - 기능 2: RAG (Pinecone에서 유사 판례 검색)
-   - 기능 3: Gemini 분석 실행
+   - 기능 1: Static Context (서버 JSON 읽기)
+   - 기능 2: RAG (Pinecone 검색)
+   - 기능 3: Gemini 분석 (temp3의 안정적 모델 로직 적용)
    ========================================== */
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { Pinecone } from '@pinecone-database/pinecone';
@@ -13,14 +13,18 @@ export const config = {
     maxDuration: 60,
 };
 
-// 시도할 모델 목록
+// [temp3에서 가져옴] 더 다양하고 강력한 모델 목록
 const MODELS_TO_TRY = [
     "gemini-1.5-flash",
+    "gemini-1.5-flash-001",
+    "gemini-1.5-flash-002",
     "gemini-1.5-pro",
-    "gemini-1.0-pro"
+    "gemini-1.0-pro",
+    "gemini-pro",
+    "gemini-flash-latest"
 ];
 
-// Pinecone 초기화 (API Key 없으면 에러 방지 위해 try-catch 감쌈)
+// Pinecone 초기화
 let pinecone;
 try {
     if (process.env.PINECONE_API_KEY) {
@@ -32,13 +36,13 @@ try {
 
 // [Helper] RAG 검색 함수
 async function retrieveRAGContext(genAI, parts) {
-    if (!pinecone) return ""; // Pinecone 설정 안됐으면 패스
+    if (!pinecone) return ""; 
 
     try {
         const imagePart = parts.find(p => p.inline_data);
         if (!imagePart) return "";
 
-        // 1. 이미지를 텍스트 검색 쿼리로 변환
+        // 1. 요약 및 쿼리 생성
         const visionModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
         const summaryPrompt = "이 법률 문서의 핵심 내용(주문, 특약 등)을 3줄로 요약해줘.";
         const summaryResult = await visionModel.generateContent([summaryPrompt, imagePart]);
@@ -66,7 +70,7 @@ async function retrieveRAGContext(genAI, parts) {
 
     } catch (e) {
         console.warn("⚠️ RAG Search Error:", e.message);
-        return ""; // 에러 나면 RAG 없이 진행
+        return ""; 
     }
 }
 
@@ -81,14 +85,12 @@ export default async function handler(req, res) {
         const genAI = new GoogleGenerativeAI(apiKey);
 
         // ---------------------------------------------------------
-        // [1] Static Context 주입 (JSON 파일 읽기)
+        // [1] Static Context 주입
         // ---------------------------------------------------------
         try {
-            // Vercel에서는 process.cwd() + 'public' 조합 사용
             const readingPath = path.join(process.cwd(), 'public', 'reading_guide.json');
             const logicPath = path.join(process.cwd(), 'public', 'guideline.json');
 
-            // 파일이 존재하는지 체크 후 읽기
             let readingGuideStr = "{}";
             let logicGuideStr = "{}";
 
@@ -107,51 +109,67 @@ export default async function handler(req, res) {
             [STEP 3]
             위 규칙에 따라 JSON 포맷으로만 응답해.
             `;
-
-            // parts 배열 맨 앞에 시스템 프롬프트 추가
+            
             parts.unshift({ text: systemPrompt });
 
         } catch (fsError) {
             console.error("❌ File System Error:", fsError);
-            // 파일 읽기 실패해도 기본 프롬프트는 넣어줌
             parts.unshift({ text: "너는 법률 분석 AI야. JSON 포맷으로 응답해." });
         }
 
         // ---------------------------------------------------------
-        // [2] RAG Context 주입 (Pinecone)
+        // [2] RAG Context 주입
         // ---------------------------------------------------------
         const ragContext = await retrieveRAGContext(genAI, parts);
         if (ragContext) {
-            // 시스템 프롬프트(parts[0]) 뒤에 RAG 내용을 이어 붙임
             parts[0].text += ragContext;
         }
 
         // ---------------------------------------------------------
-        // [3] Gemini 호출
+        // [3] Gemini 호출 (temp3의 안정적 로직 적용)
         // ---------------------------------------------------------
         let lastError = null;
+        
         for (const modelName of MODELS_TO_TRY) {
             try {
+                console.log(`🤖 Trying model: ${modelName}`);
+
+                // [중요] 모델별 설정 분기 (temp3 로직)
+                // 1.5 버전이나 flash 버전일 때만 JSON 모드 강제, 그 외엔 일반 텍스트 모드
+                const generationConfig = {
+                    temperature: 0.1
+                };
+                
+                if (modelName.includes("1.5") || modelName.includes("flash")) {
+                    generationConfig.responseMimeType = "application/json";
+                }
+
                 const model = genAI.getGenerativeModel({ 
                     model: modelName,
-                    generationConfig: { responseMimeType: "application/json" }
+                    generationConfig: generationConfig
                 });
 
                 const result = await model.generateContent({
                     contents: [{ role: "user", parts: parts }]
                 });
                 
+                const responseText = result.response.text();
+                
+                console.log(`✅ Success with ${modelName}`);
+
                 return res.status(200).json({ 
-                    candidates: [{ content: { parts: [{ text: result.response.text() }] } }]
+                    candidates: [{ content: { parts: [{ text: responseText }] } }]
                 });
 
             } catch (error) {
-                console.warn(`Retry ${modelName} failed:`, error.message);
+                console.warn(`❌ Failed with ${modelName}:`, error.message);
                 lastError = error;
+                // 에러가 나면 멈추지 않고 다음 모델을 시도합니다 (continue)
+                continue;
             }
         }
 
-        throw new Error("All models failed. " + lastError?.message);
+        throw new Error("모든 모델 시도 실패. " + (lastError?.message || "Unknown error"));
 
     } catch (error) {
         console.error("Handler Final Error:", error);
