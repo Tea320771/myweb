@@ -825,9 +825,10 @@ function createDebugUI() {
     document.body.appendChild(div.firstElementChild);
 }
 
-// 2. 비교 분석 실행 함수
+// 2. 비교 분석 실행 함수 (다중 파일 지원 & 에러 핸들링 강화)
 async function runLogicComparison() {
-    if (!queuedFiles || queuedFiles.length === 0) {
+    // 1. 파일 확인
+    if (!window.queuedFiles || window.queuedFiles.length === 0) {
         alert("업로드된 파일이 없습니다. 파일을 먼저 추가해주세요.");
         return;
     }
@@ -836,58 +837,76 @@ async function runLogicComparison() {
     const baselineArea = document.getElementById('debug-baseline-result');
     const ragArea = document.getElementById('debug-rag-result');
 
-    // 로딩 상태 표시
+    // 2. 로딩 UI 설정
     btn.disabled = true;
-    btn.innerText = "⏳ 분석 중...";
-    baselineArea.innerText = "분석 중...";
-    baselineArea.style.opacity = "0.5";
-    ragArea.innerText = "분석 중...";
-    ragArea.style.opacity = "0.5";
+    btn.innerText = "⏳ 서버 분석 중... (최대 30초)";
+    if(baselineArea) { baselineArea.innerText = "분석 요청 중..."; baselineArea.style.opacity = "0.5"; }
+    if(ragArea) { ragArea.innerText = "분석 요청 중..."; ragArea.style.opacity = "0.5"; }
 
     try {
-        // 첫 번째 파일을 기준으로 분석 (대표 파일)
-        const file = queuedFiles[0];
-        const base64 = await fileToBase64(file);
+        // 3. [핵심] 모든 파일을 Base64로 변환하여 '배열'로 준비
+        const filesPayload = await Promise.all(window.queuedFiles.map(async (file) => {
+            const base64 = await fileToBase64(file);
+            return {
+                fileBase64: base64, // 백엔드가 기대하는 키 이름
+                mimeType: file.type,
+                fileName: file.name
+            };
+        }));
 
-         // [수정] 상대 경로('/api/rag-train')를 -> '절대 경로(https://...)'로 변경
-        // 주의: 아래 주소를 실제 rag-train.js가 배포된 Vercel 주소로 바꿔주세요!
+        console.log(`🚀 전송할 파일 수: ${filesPayload.length}개`);
+
+        // 4. 백엔드 API 호출
+        // [주의] rag-train.js가 배포된 실제 Vercel 주소를 입력하세요.
+        // 예: "https://your-backend-project.vercel.app/api/rag-train"
+        // 같은 프로젝트라면 "/api/rag-train" 사용 가능
         const BACKEND_URL = "https://legal-rag-system-five.vercel.app/api/rag-train"; 
 
-        const response = await fetch(BACKEND_URL, {  // <-- 변수 사용
+        const response = await fetch(BACKEND_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 step: 'analyze',
-                fileBase64: base64,
-                mimeType: file.type,
-                fileName: file.name,
-                docType: 'judgment'
+                files: filesPayload, // [중요] 단일 파일 대신 배열 전송
+                docType: 'judgment'  // 필요 시 UI에서 선택한 값으로 변경 가능
             })
         });
 
-        const result = await response.json();
+        // 5. 응답 처리
+        const responseText = await response.text();
 
-        if (!result.success) throw new Error(result.error || "분석 실패");
+        if (!response.ok) {
+            // 서버 에러 메시지 추출 (HTML일 경우 태그 제거)
+            let errMsg = responseText;
+            if (responseText.includes("<!DOCTYPE html>")) {
+                errMsg = "서버 경로를 찾을 수 없거나(404) 내부 오류(500)가 발생했습니다.";
+            }
+            throw new Error(`서버 오류 (${response.status}): ${errMsg.substring(0, 100)}...`);
+        }
 
-        // 결과 표시 (JSON 포맷팅)
+        const result = JSON.parse(responseText);
+
+        if (!result.success) throw new Error(result.error || "분석에 실패했습니다.");
+
+        // 6. 결과 표시
         const formatJSON = (data) => {
              if (typeof data === 'string') return data;
              return JSON.stringify(data, null, 2);
         };
 
-        baselineArea.innerText = formatJSON(result.data.analysis_baseline);
-        ragArea.innerText = formatJSON(result.data.analysis_rag);
+        if(baselineArea) baselineArea.innerText = formatJSON(result.data.analysis_baseline);
+        if(ragArea) ragArea.innerText = formatJSON(result.data.analysis_rag);
 
     } catch (e) {
-        console.error(e);
-        baselineArea.innerText = "❌ 오류 발생: " + e.message;
-        ragArea.innerText = "❌ 오류 발생: " + e.message;
+        console.error("Debug Error:", e);
+        if(baselineArea) baselineArea.innerText = "❌ 오류 발생:\n" + e.message;
+        if(ragArea) ragArea.innerText = "❌ 오류 발생:\n" + e.message;
     } finally {
         // UI 복구
         btn.disabled = false;
         btn.innerText = "▶️ 비교 분석 실행 (Baseline vs RAG)";
-        baselineArea.style.opacity = "1";
-        ragArea.style.opacity = "1";
+        if(baselineArea) baselineArea.style.opacity = "1";
+        if(ragArea) ragArea.style.opacity = "1";
     }
 }
 
