@@ -1,11 +1,12 @@
 /* ==========================================
    /api/update-rag.js
    - 기능: 사용자가 입력한 새로운 판례/논리를 Pinecone DB에 저장 (Upsert)
+   - [수정] uuid 패키지 의존성 제거 (Date.now() 사용)
    ========================================== */
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { Pinecone } from '@pinecone-database/pinecone';
-import { v4 as uuidv4 } from 'uuid'; // ID 생성을 위해 필요 (없으면 npm install uuid 하거나 Date.now() 사용)
 
+// Vercel Serverless 함수 설정
 export const config = {
     maxDuration: 60,
 };
@@ -23,6 +24,7 @@ export default async function handler(req, res) {
         const pineconeKey = process.env.PINECONE_API_KEY;
         
         if (!geminiKey || !pineconeKey) {
+            console.error("❌ API Keys Missing");
             return res.status(500).json({ error: 'API Keys Missing (Gemini or Pinecone)' });
         }
 
@@ -31,7 +33,6 @@ export default async function handler(req, res) {
         }
 
         // 2. 텍스트 임베딩 (Vector화)
-        // 향후 검색할 때 "textToEmbed"(예: 판결 주문)와 비슷한 문장이 들어오면 찾아내기 위함
         const genAI = new GoogleGenerativeAI(geminiKey);
         const embedModel = genAI.getGenerativeModel({ model: "text-embedding-004" });
         
@@ -40,17 +41,17 @@ export default async function handler(req, res) {
 
         // 3. Pinecone에 저장 (Upsert)
         const pinecone = new Pinecone({ apiKey: pineconeKey });
-        const index = pinecone.index("legal-rag-db"); // analyze.js와 동일한 인덱스 이름 사용
+        const index = pinecone.index("legal-rag-db"); // [중요] Pinecone 콘솔에 이 이름의 Index가 있어야 함
 
-        // 고유 ID 생성 (uuid가 없으면 Date.now()로 대체 가능)
+        // 고유 ID 생성 (uuid 패키지 없이 시간 기반 생성)
         const uniqueId = `manual-feedback-${Date.now()}`;
 
         await index.upsert([{
             id: uniqueId,
             values: vectorValues,
             metadata: {
-                text: textToEmbed,     // 원본 상황 텍스트
-                logicRule: logicToStore, // AI가 참고해야 할 핵심 논리
+                text: textToEmbed,       // 원본 상황 텍스트 (검색될 내용)
+                logicRule: logicToStore, // AI가 참고해야 할 핵심 논리 (검색 결과)
                 source: "user_debug_feedback",
                 createdAt: new Date().toISOString()
             }
@@ -61,6 +62,7 @@ export default async function handler(req, res) {
 
     } catch (error) {
         console.error("❌ RAG Update Error:", error);
-        return res.status(500).json({ error: error.message });
+        // 에러 내용을 상세히 반환하여 디버깅 돕기
+        return res.status(500).json({ error: error.message, stack: error.stack });
     }
 }
