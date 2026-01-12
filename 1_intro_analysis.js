@@ -858,7 +858,8 @@ function createDebugUI() {
                         <label style="font-weight:bold; margin-right: 10px;">수정 대상 파일:</label>
                         <select id="debug-target-file" style="padding: 5px; border-radius: 4px; border: 1px solid #ccc;">
                             <option value="reading_guide.json">📂 Reading Guide (텍스트 추출/오타/포맷 관련)</option>
-                            <option value="guideline.json">🧠 Logic Guide (계산/비율/판단 논리 관련)</option>
+                            <option value="guideline.json">🧠 Logic Guide (계산/비율/판단 기초적 논리 관련)</option>
+                            <option value="rag_db">💾 RAG Database (추출된 문구에 대한 구체적 해석 관련)</option>
                         </select>
                     </div>
 
@@ -891,91 +892,95 @@ function openDebugModal() {
 // 3. 디버그 피드백 제출 및 AI 처리
 async function submitDebugFeedback() {
     const targetFile = document.getElementById('debug-target-file').value;
-    const instruction = document.getElementById('debug-instruction').value;
-    const currentData = document.getElementById('debug-json-viewer').value;
+    const instruction = document.getElementById('debug-instruction').value; // 사용자의 수정 지시
+    const currentData = document.getElementById('debug-json-viewer').value; // 현재 분석된 전체 데이터
 
-    if (!instruction.trim()) {
-        alert("수정할 지침 내용을 입력해주세요.");
-        return;
-    }
-
-    const logsContainer = document.getElementById('processing-logs');
-    // 로그 UI가 있으면 표시
-    if (logsContainer) {
-        logsContainer.style.display = 'block';
-        logsContainer.innerHTML += `<div class="log-item log-info">🔧 [DEBUG] '${targetFile}' 업데이트를 위한 규칙 생성 중...</div>`;
-        logsContainer.scrollTop = logsContainer.scrollHeight;
-    }
+    if (!instruction.trim()) { alert("수정할 내용을 입력하세요."); return; }
 
     document.getElementById('debug-modal').classList.add('hidden');
-    alert("AI가 지침을 분석하여 가이드라인을 업데이트합니다. 잠시만 기다려주세요.");
-
-    // 메타 프롬프트 구성 (파일 타입에 따라 다르게 요청)
-    let metaPrompt = "";
     
-    if (targetFile === 'reading_guide.json') {
-        metaPrompt = `
-        역할: 너는 OCR 및 텍스트 추출 규칙 생성기다.
-        목표: 사용자의 지적 사항을 반영하여 'reading_guide.json'에 들어갈 'extraction_rule' 또는 'strategy'를 JSON으로 생성하라.
-        
-        [현재 잘못 추출된 데이터 일부]
-        ${currentData.substring(0, 300)}...
-
-        [사용자 지침]
-        "${instruction}"
-
-        [생성할 JSON 포맷]
-        {
-            "type": "reading_correction",
-            "target_field": "(수정이 필요한 필드명, 예: applicantName, costRulingText)",
-            "new_strategy": {
-                "description": "사용자 지침에 따른 추출 전략",
-                "regex_pattern": "(필요하다면 정규식)",
-                "keyword_guide": "(필요하다면 핵심 키워드)"
-            }
-        }
-        오직 JSON 객체 1개만 출력해.
-        `;
-    } else {
-        metaPrompt = `
-        역할: 너는 법률 논리 규칙 생성기다.
-        목표: 사용자의 지적 사항을 반영하여 'guideline.json'에 들어갈 'calculation_logic'을 JSON으로 생성하라.
-
-        [현재 데이터 상황]
-        ${currentData.substring(0, 300)}...
-
-        [사용자 지침]
-        "${instruction}"
-
-        [생성할 JSON 포맷]
-        {
-            "type": "logic_correction",
-            "description": "사용자 피드백 기반 논리 규칙",
-            "condition": "(이 규칙이 적용될 상황)",
-            "action": "(적용해야 할 비율 계산 또는 판단 로직)"
-        }
-        오직 JSON 객체 1개만 출력해.
-        `;
+    // 로그 UI 표시
+    const logsContainer = document.getElementById('processing-logs');
+    if (logsContainer) {
+        logsContainer.style.display = 'block';
+        logsContainer.innerHTML += `<div class="log-item log-info">🧠 피드백 분석 및 저장소 업데이트 중... (${targetFile})</div>`;
     }
 
     try {
-        // AI 호출
-        const parts = [{ text: metaPrompt }];
-        const newRuleJson = await callBackendFunction(parts);
+        // [CASE 1] RAG 데이터베이스 업데이트 (신규 기능)
+        if (targetFile === 'rag_db') {
+            // 1. Gemini에게 사용자의 모호한 말을 "검색 가능한 상황(Context)"과 "명확한 논리(Logic)"로 정리시킴
+            const metaPrompt = `
+            역할: RAG 데이터 생성기.
+            목표: 사용자의 피드백을 분석하여 'Vector DB'에 저장할 핵심 정보를 추출하라.
+            
+            [입력 데이터]
+            - 전체 분석 결과 중 일부: ${currentData.substring(0, 500)}...
+            - 사용자 지적 사항: "${instruction}"
+            
+            [지시사항]
+            사용자가 지적한 문제는 특정 문구(주문 내용 등)를 잘못 해석한 것이다.
+            1. 'trigger_text': 향후 AI가 유사한 상황을 만났을 때 검색할 수 있는 '핵심 문구'나 '상황 요약'을 추출해라.
+            2. 'logic_rule': 그 상황에서 적용해야 할 올바른 '해석 논리'를 한 문장으로 정리해라.
 
-        console.log(`[DEBUG] 생성된 규칙 (${targetFile}):`, newRuleJson);
+            [출력 포맷 - JSON Only]
+            {
+                "trigger_text": "피고들이 연대하여 금 500원을 지급하라",
+                "logic_rule": "연대 지급 문구가 있으면 분담 비율을 1:1(균등)로 계산한다."
+            }
+            `;
+            
+            const parts = [{ text: metaPrompt }];
+            const extracted = await callBackendFunction(parts); // Gemini가 정리한 JSON 받기
+            
+            console.log("[RAG] 추출된 학습 데이터:", extracted);
 
-        // 서버 저장 요청 (파일명 포함)
-        await saveToSpecificFile(newRuleJson, targetFile);
+            // 2. 정리된 데이터를 RAG 저장 API로 전송
+            const response = await fetch('/api/update-rag', {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ 
+                    textToEmbed: extracted.trigger_text, // 이 문장이 벡터화되어 검색 키가 됨
+                    logicToStore: extracted.logic_rule   // 이 논리가 검색 결과로 나옴
+                })
+            });
 
-        if (logsContainer) {
-            logsContainer.innerHTML += `<div class="log-item log-success">✅ [DEBUG] ${targetFile} 업데이트 완료!</div>`;
+            if (!response.ok) throw new Error(await response.text());
+            
+            alert(`[RAG 저장 완료]\n유사한 판례가 나오면 다음 논리를 참고합니다:\n"${extracted.logic_rule}"`);
+
+        } 
+        // [CASE 2] 기존 JSON 파일(guideline.json 등) 업데이트
+        else {
+            let metaPrompt = "";
+            if (targetFile === 'reading_guide.json') {
+                metaPrompt = `
+                역할: OCR 추출 규칙 생성기. 목표: 'reading_guide.json' 수정용 JSON 생성.
+                상황: ${currentData.substring(0, 200)}...
+                사용자 지시: "${instruction}"
+                출력: {"type": "reading_correction", "new_strategy": { ... }} 형태의 JSON 1개.
+                `;
+            } else {
+                metaPrompt = `
+                역할: 법률 논리 규칙 생성기. 목표: 'guideline.json' 수정용 JSON 생성.
+                상황: ${currentData.substring(0, 200)}...
+                사용자 지시: "${instruction}"
+                출력: {"type": "logic_correction", "action": "..." } 형태의 JSON 1개.
+                `;
+            }
+
+            const parts = [{ text: metaPrompt }];
+            const newRuleJson = await callBackendFunction(parts);
+            await saveToGitHub(newRuleJson, targetFile); // 기존 함수 재사용
+            alert(`[파일 업데이트 완료] ${targetFile}에 규칙이 추가되었습니다.`);
         }
-        alert(`${targetFile} 파일이 성공적으로 업데이트되었습니다.\n다시 분석하면 개선된 결과가 나옵니다.`);
+
+        if (logsContainer) logsContainer.innerHTML += `<div class="log-item log-success">✅ 학습 완료!</div>`;
 
     } catch (e) {
         console.error(e);
-        alert(`업데이트 실패: ${e.message}`);
+        alert("업데이트 실패: " + e.message);
+        if (logsContainer) logsContainer.innerHTML += `<div class="log-item log-error">❌ 실패: ${e.message}</div>`;
     }
 }
 
