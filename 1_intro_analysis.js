@@ -122,6 +122,10 @@ function removeFile(index) {
 async function startAnalysis() {
     if (window.queuedFiles.length === 0) { alert("분석할 파일이 없습니다."); return; }
     
+    // [추가] 분석 시작 시 모달 띄우기
+    const loadingModal = document.getElementById('analysis-loading-modal');
+    if(loadingModal) loadingModal.classList.remove('hidden');
+
     const actionArea = document.getElementById('action-area');
     const logsContainer = document.getElementById('processing-logs');
     
@@ -240,11 +244,17 @@ async function startAnalysis() {
         // API 호출
         window.aiExtractedData = await callBackendFunction(parts);
 
+        // [추가] 분석 성공 시 모달 숨김
+        if(loadingModal) loadingModal.classList.add('hidden');
+
         logsContainer.innerHTML += `<div class="log-item log-success">✨ 분석 완료! (RAG 적용됨)</div>`;
         
         setTimeout(() => { startDataReview(window.aiExtractedData); }, 800);
 
     } catch (error) {
+        // [추가] 에러 발생 시에도 모달 숨김
+        if(loadingModal) loadingModal.classList.add('hidden');
+
         console.error(error);
         logsContainer.innerHTML += `<div class="log-item log-error">❌ 오류: ${error.message}</div>`;
         alert(error.message); 
