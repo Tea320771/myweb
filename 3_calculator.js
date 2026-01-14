@@ -216,41 +216,202 @@ function getRespondentNames() {
     return lines.map(l => l.replace(/^\d+[\.\)]\s*/, '').trim());
 }
 
-// AI 데이터 연동 및 동적 비율 UI 관리 로직
+// [중요] AI 데이터 연동 및 계산기 필드 자동 완성 마스터 함수
 function applyAIAnalysisToCalculator(data) {
-    if(!data) return;
+    if (!data) return;
+
+    console.log("📥 [Step 3] AI 데이터 적용 시작:", data);
+
+    // -------------------------------------------------------
+    // 1. 기본 비용 및 사건 정보 주입 (소가, 변호사보수, 법원 등)
+    // -------------------------------------------------------
+    for (let i = 1; i <= 3; i++) {
+        // (1) 텍스트 필드 (법원, 사건번호)
+        if (data[`courtName${i}`]) document.getElementById(`courtName${i}`).value = data[`courtName${i}`];
+        if (data[`caseNo${i}`]) document.getElementById(`caseNo${i}`).value = data[`caseNo${i}`];
+        
+        // (2) 금액 필드 (소가, 착수금, 성공보수) -> 숫자만 추출 후 포맷팅
+        ['soga', 'startFee', 'successFee'].forEach(field => {
+            const key = field + i; // 예: soga1
+            const rawVal = data[key];
+            const el = document.getElementById(key);
+            
+            if (el && rawVal !== undefined && rawVal !== null && rawVal !== "") {
+                // "금 5,000,000원" -> "5000000" 변환
+                el.value = String(rawVal).replace(/[^0-9]/g, '');
+                // 콤마(,) 포맷팅 적용 함수 호출 (formatCurrency가 3_calculator.js에 있다고 가정)
+                if (typeof formatCurrency === 'function') formatCurrency(el, i);
+            }
+        });
+        
+        // (3) 주문 텍스트 (판결문 내용)
+        const rulingText = data[`costRulingText${i}`] || data[`rulingText${i}`];
+        const textEl = document.getElementById(`rulingText${i}`);
+        if (textEl && rulingText) textEl.value = rulingText;
+    }
+
+    // -------------------------------------------------------
+    // 2. 피신청인 비율 UI 강제 생성 (데이터 주입 전 필수 단계)
+    // -------------------------------------------------------
+    // 현재 입력된 피신청인 이름들을 가져와서 DOM을 먼저 만듭니다.
     initRatioUIs(); 
 
+    // -------------------------------------------------------
+    // 3. 비율 정보(내부 분담, 대외 부담) 매핑 및 주입
+    // -------------------------------------------------------
+    const respondentNames = getRespondentNames(); // 현재 UI에 있는 피신청인 목록
+
     for (let i = 1; i <= 3; i++) {
-        const rulingText = data['costRulingText' + i]; 
-        const details = data['costBurdenDetails' + i]; 
+        const details = data[`costBurdenDetails${i}`]; // AI가 분석한 상세 비율 배열
+        const globalRatio = data[`burdenRatio${i}`];   // AI가 분석한 전체 비율 (예: "50%")
 
-        if (rulingText) {
-            const textArea = document.getElementById(`rulingText${i}`);
-            if (textArea) textArea.value = rulingText;
-        }
-
-        if (details && Array.isArray(details) && details.length > 0) {
-            const currentNames = getRespondentNames(); 
-            currentNames.forEach((name, idx) => {
+        respondentNames.forEach((name, idx) => {
+            // A. 이름으로 상세 매칭 시도 (AI가 이름을 인식한 경우)
+            let matched = null;
+            if (details && Array.isArray(details)) {
                 const cleanName = name.replace(/\s+/g, '');
-                const matchedItem = details.find(d => {
+                matched = details.find(d => {
                     const cleanDName = d.name.replace(/\s+/g, '');
                     return cleanName.includes(cleanDName) || cleanDName.includes(cleanName);
                 });
+            }
 
-                if (matchedItem) {
-                    if (matchedItem.internalShare !== undefined && matchedItem.internalShare !== null) {
-                        syncSliderInput(i, idx, matchedItem.internalShare);
-                    }
-                    if (matchedItem.reimburseRatio !== undefined && matchedItem.reimburseRatio !== null) {
-                        const extInput = document.getElementById(`ext-${i}-${idx}`);
-                        if (extInput) extInput.value = matchedItem.reimburseRatio;
-                    }
+            // B. 값 주입 대상 요소 가져오기
+            const slider = document.getElementById(`slider-${i}-${idx}`); // 내부 분담 슬라이더
+            const internalInput = document.getElementById(`val-${i}-${idx}`); // 내부 분담 입력칸
+            const externalInput = document.getElementById(`ext-${i}-${idx}`); // 대외 부담(상환) 비율
+
+            // C. 데이터 적용 로직
+            if (matched) {
+                // [내부 분담 비율] (피신청인끼리 얼마씩?)
+                if (matched.internalShare !== undefined && slider && internalInput) {
+                    slider.value = matched.internalShare;
+                    internalInput.value = matched.internalShare;
                 }
-            });
+                // [대외 부담 비율] (신청인에게 얼마를?)
+                if (matched.reimburseRatio !== undefined && externalInput) {
+                    externalInput.value = matched.reimburseRatio;
+                }
+            } 
+            else if (globalRatio && externalInput) {
+                // 상세 매칭 실패 시, 전체 비율(globalRatio)을 일괄 적용
+                // 예: 판결문에 "피고들은 원고에게 비용의 1/2을 지급하라" -> 모두에게 1/2 적용
+                externalInput.value = globalRatio;
+            }
+        });
+    }
+
+    // -------------------------------------------------------
+    // 4. 최종 계산 실행 (모든 값이 들어간 상태에서 합계 갱신)
+    // -------------------------------------------------------
+    calculateAll();
+}
+
+// [기존 함수 유지] 피신청인 이름 파싱
+function getRespondentNames() {
+    const nameInput = document.getElementById('respondentName');
+    const nameVal = nameInput ? nameInput.value : "";
+    if (!nameVal) return ["피신청인"];
+    // 1. 홍길동\n2. 김철수 형태 제거하고 이름만 추출
+    const lines = nameVal.split('\n').filter(line => line.trim() !== "");
+    return lines.map(l => l.replace(/^\d+[\.\)]\s*/, '').trim());
+}
+
+// [기존 함수 유지] 비율 UI 생성 (이 함수가 반드시 applyAIAnalysisToCalculator 내부에서 호출되어야 함)
+function initRatioUIs() {
+    for (let i = 1; i <= 3; i++) {
+        createRatioUIForCard(i);
+    }
+}
+
+// [기존 함수 유지] 카드별 비율 UI 그리기
+function createRatioUIForCard(instanceIdx) {
+    const card = document.getElementById('card-' + instanceIdx);
+    if (!card) return;
+
+    // 기존 컨테이너가 있으면 비우지 않고, 새로 갱신하기 위해 준비
+    let container = document.getElementById(`ratio-settings-container-${instanceIdx}`);
+    if (!container) {
+        container = document.createElement('div');
+        container.id = `ratio-settings-container-${instanceIdx}`;
+        container.className = 'ratio-settings-box';
+        // 위치 잡기 (소가 입력란 아래쪽 등 적절한 위치)
+        const sogaContainer = document.getElementById(`soga-container-${instanceIdx}`);
+        if(sogaContainer) {
+            const optionsContainer = sogaContainer.querySelector('.options-container');
+            sogaContainer.insertBefore(container, optionsContainer);
+        } else {
+             // sogaContainer가 없으면 card 본문에 append (예외처리)
+             card.appendChild(container);
         }
     }
+
+    const names = getRespondentNames();
+    const count = names.length;
+    
+    // HTML 조립
+    let html = `
+        <div style="margin-bottom:10px;">
+            <label style="font-weight:bold; color:#1d4ed8; display:block; margin-bottom:5px;">
+                피신청인별 분담 비율 설정 (주문 내용 반영)
+            </label>
+            <textarea id="rulingText${instanceIdx}" class="form-input" rows="2" 
+                placeholder="판결 주문(비용 부담 부분) 예시: 소송총비용 중 1/3은 원고가, 나머지는 피고가 부담한다."
+                style="font-size:0.85rem; padding:8px; margin-bottom:5px;"></textarea>
+             <div style="display:flex; justify-content:space-between; align-items:center; gap: 8px;">
+                <button class="btn-manual-trigger" onclick="autoParseRuling(${instanceIdx})" style="flex:1; padding:6px 10px; font-size:0.8rem; border-radius:4px; margin-right:0;">
+                    🪄 텍스트로 비율 재설정
+                </button>
+            </div>
+        </div>
+    `;
+
+    names.forEach((name, idx) => {
+        // 초기값: 1/N
+        const defaultInternal = Math.floor(100 / count);
+        const internalVal = (idx === count - 1) ? (100 - (defaultInternal * (count - 1))) : defaultInternal;
+        
+        // 피신청인이 1명이면 내부 분담 비율(슬라이더) 숨김
+        const internalStyle = (count === 1) ? "display:none;" : "flex:1;";
+
+        html += `
+            <div class="respondent-ratio-row" data-idx="${idx}" style="background:#f8fafc; padding:10px; border-radius:6px; margin-bottom:8px; border:1px solid #e2e8f0;">
+                <div style="font-weight:bold; margin-bottom:5px;">${name}</div>
+                <div style="display:flex; gap:10px; align-items:center;">
+                    
+                    <div style="${internalStyle}">
+                        <label style="font-size:0.75rem; color:#64748b;">내부 분담 (${name}의 몫)</label>
+                        <div style="display:flex; align-items:center; gap:5px;">
+                            <input type="range" min="0" max="100" value="${internalVal}" 
+                                class="internal-slider" id="slider-${instanceIdx}-${idx}" 
+                                oninput="syncSliderInput(${instanceIdx}, ${idx}, this.value)" style="flex:1;">
+                            <input type="number" min="0" max="100" value="${internalVal}" 
+                                class="internal-input form-input" id="val-${instanceIdx}-${idx}" 
+                                onchange="syncSliderInput(${instanceIdx}, ${idx}, this.value)" style="width:50px; text-align:center; padding:2px;">
+                            <span style="font-size:0.8rem">%</span>
+                        </div>
+                    </div>
+
+                    <div style="flex:1;">
+                        <label style="font-size:0.75rem; color:#64748b;">상환 비율 (신청인에게 줄 돈)</label>
+                        <input type="text" class="external-ratio form-input" id="ext-${instanceIdx}-${idx}" 
+                            value="100" placeholder="예: 100, 1/2" onkeyup="calculateAll()"
+                            style="padding:4px; text-align:center;">
+                    </div>
+                </div>
+            </div>
+        `;
+    });
+
+    container.innerHTML = html;
+}
+
+// [기존 함수 유지] 슬라이더-인풋 동기화
+function syncSliderInput(instanceIdx, respIdx, value) {
+    const slider = document.getElementById(`slider-${instanceIdx}-${respIdx}`);
+    const input = document.getElementById(`val-${instanceIdx}-${respIdx}`);
+    if(slider) slider.value = value;
+    if(input) input.value = value;
     calculateAll();
 }
 
