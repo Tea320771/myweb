@@ -126,96 +126,73 @@ async function startAnalysis() {
     
     actionArea.classList.add('hidden'); 
     logsContainer.style.display = 'block';
-    logsContainer.innerHTML = `<div class="log-item log-info">AI 분석 엔진 및 가이드라인 로드 중...</div>`;
+    logsContainer.innerHTML = `<div class="log-item log-info">AI 분석 엔진, 가이드라인 및 RAG 데이터 로드 중...</div>`;
 
     try {
         let readingGuideStr = "";
         let logicGuideStr = "";
-        
+        let ragDataStr = ""; // [New] RAG 데이터를 담을 변수
+
         try {
-            const [readingResp, logicResp] = await Promise.all([
+            // 1. [Fetch] 가이드라인 2개 + RAG 학습 데이터(DB) 동시 호출
+            // (참고: 실제 RAG 검색은 텍스트가 있어야 정확하지만, 여기서는 '사용자가 피드백으로 학습시킨 전역 규칙'을 가져온다고 가정합니다.)
+            // 만약 검색어가 필요하다면 1차 OCR 후 RAG를 호출하는 2-Step 방식이 필요하지만, 
+            // 현재 구조상 '학습된 일반 규칙'을 모두 가져오는 '/api/get-rag-rules' 같은 엔드포인트를 가정하거나,
+            // 간단히 guideline.json과 유사하게 로드합니다.
+            
+            const [readingResp, logicResp, ragResp] = await Promise.all([
                 fetch(READING_GUIDE_URL),
-                fetch(LOGIC_GUIDE_URL)
+                fetch(LOGIC_GUIDE_URL),
+                // [New] RAG DB에서 '사용자 피드백으로 학습된 규칙들'을 가져오는 API 호출
+                // 만약 별도 API가 없다면 이 부분은 스킵되거나, 학습된 JSON 파일을 로드해야 함
+                fetch('/api/get-rag-rules').catch(() => ({ ok: false })) 
             ]);
 
-            if (readingResp.ok) {
-                const rJson = await readingResp.json();
-                readingGuideStr = JSON.stringify(rJson, null, 2);
+            if (readingResp.ok) readingGuideStr = JSON.stringify(await readingResp.json(), null, 2);
+            if (logicResp.ok) logicGuideStr = JSON.stringify(await logicResp.json(), null, 2);
+            
+            // RAG 데이터 처리
+            if (ragResp && ragResp.ok) {
+                const ragJson = await ragResp.json();
+                ragDataStr = JSON.stringify(ragJson, null, 2);
+                logsContainer.innerHTML += `<div class="log-item log-success">🧠 RAG 학습 데이터 로드 성공</div>`;
+            } else {
+                ragDataStr = "No RAG data available.";
             }
-            if (logicResp.ok) {
-                const lJson = await logicResp.json();
-                logicGuideStr = JSON.stringify(lJson, null, 2);
-            }
+
         } catch (e) {
-            console.warn("가이드라인 로드 실패:", e);
+            console.warn("데이터 로드 중 일부 실패:", e);
         }
 
         let parts = [];
         
-        // [FIX] 프롬프트 강화: 단순 추출이 아니라 '3_calculator.js'를 위한 데이터 생성기로 역할 정의
+        // [FIX] 프롬프트 수정: RAG DB 섹션 추가 및 우선순위 지시
         const systemPrompt = `
-        너는 대한민국 법원의 '소송비용액 확정 신청'을 처리하는 전문 법률 사무원(AI)이다.
-        너의 목표는 문서를 읽고 [텍스트 추출] -> [법률적 판단] -> [JSON 데이터 생성]을 수행하는 것이다.
+        너는 대한민국 법원의 '소송비용액 확정 신청'을 처리하는 전문 AI다.
+        제공된 판결문 이미지들을 분석하여 JSON 데이터를 생성하라.
 
-        반드시 아래 3단계를 거쳐 생각하고 결과를 도출하라.
+        너의 판단 기준은 다음 3가지 소스(Source)다.
+        1. **[Reading Guide]**: 텍스트 추출 규칙
+        2. **[Logic Guide]**: 기본적인 법률 해석 및 계산 규칙 (상급심 우선 원칙 등 포함)
+        3. **[RAG Learned Data]**: 사용자의 피드백을 통해 학습된 '최신 판례 해석 규칙' (가장 높은 우선순위)
 
-        === [STEP 1: Reading Phase (텍스트 추출)] ===
-        제공된 'Reading Guide'를 참고하여 문서에서 다음 정보를 정확히 찾아라.
-        - 법원명, 사건번호, 당사자(원고/피고) 이름 및 주소
-        - 주문(Ruling Text): 문장 중간에 줄바꿈이 있어도 하나로 합쳐서 완벽한 문장으로 복원하라.
-        - 금액 정보: 소가, 착수금, 성공보수 등이 있다면 숫자 형태로 추출하라.
-
-        [Reading Guide]
+        === [작업 지시] ===
+        1. 문서를 읽고 [Reading Guide]에 따라 텍스트를 추출하라.
+        2. [Logic Guide]의 **"conflicting_judgments_resolution"** 규칙을 적용하여 상급심 판결이 하급심을 취소했는지 확인하라.
+        3. **[중요]** 만약 해석이 모호하거나 특이한 케이스가 발생하면, **[RAG Learned Data]**에 유사한 사례가 있는지 확인하고 그 논리를 최우선으로 적용하라.
+        
+        ---
+        [Reading Guide Data]
         ${readingGuideStr}
 
-        === [STEP 2: Logic Phase (해석 및 계산)] ===
-        제공된 'Logic Guide'와 너의 법률적 지식을 활용하여 다음을 계산하라.
-        1. **소송비용 부담 비율(reimburseRatio)**: 
-           - 주문에 "소송비용은 피고가 부담한다"라고 되어 있으면 피고의 부담 비율은 100이다.
-           - "소송비용 중 30%는 원고가, 나머지는 피고가 부담한다"라면 피고의 부담 비율은 70이다.
-        2. **내부 분담 비율(internalShare)**:
-           - 피고가 여러 명일 때, 주문에 "연대하여" 또는 "각자"라는 말이 있으면, 피고들 간의 내부 분담은 균등(1/N)하게 나눈다. (예: 피고 2명이면 각각 50%)
-           - 별도 명시가 없으면 균등 분할이 원칙이다.
-
-        [Logic Guide]
+        [Logic Guide Data]
         ${logicGuideStr}
 
-        === [STEP 3: Output Phase (JSON 생성)] ===
-        **반드시 아래의 JSON 구조를 엄격하게 지켜서 출력하라.** (키 이름이 다르면 계산기가 작동하지 않으므로 정확히 일치시켜야 한다.)
+        [RAG Learned Data (User Feedback & Precedents)]
+        ${ragDataStr}
+        ---
 
-        {
-            "courtName1": "서울중앙지방법원",
-            "caseNo1": "2023가합123456",
-            "rulingDate1": "2023. 10. 15.",
-            
-            "soga1": 50000000, 
-            "startFee1": 3300000,
-            "successFee1": 0,
-
-            "costRulingText1": "추출한 주문 텍스트 원문",
-            "burdenRatio1": "피고들이 원고에게 주어야 할 전체 비율 (예: 100 또는 70)",
-
-            "plaintiffs": [ { "name": "이원고", "addr": "서울시..." } ],
-            "defendants": [ { "name": "김피고", "addr": "부산시..." }, { "name": "박피고", "addr": "대구시..." } ],
-
-            "costBurdenDetails1": [
-                {
-                    "name": "김피고",
-                    "role": "피신청인",
-                    "internalShare": 50,      // (설명: 피고들끼리 나누는 비율. 숫자만)
-                    "reimburseRatio": 100     // (설명: 원고에게 갚아야 할 비율. 주문에 따름. 숫자만)
-                },
-                {
-                    "name": "박피고",
-                    "role": "피신청인",
-                    "internalShare": 50,
-                    "reimburseRatio": 100
-                }
-            ]
-        }
-        
-        *주의: 금액(soga, fee)은 콤마 없는 숫자(Integer)로, 비율(share, ratio)은 0~100 사이의 숫자(Number)로 출력하라.*
-        오직 JSON 형식의 텍스트만 응답해.
+        오직 JSON 형식의 텍스트만 응답하라.
         `;
 
         parts.push({ text: systemPrompt });

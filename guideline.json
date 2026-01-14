@@ -1,75 +1,29 @@
-[
-  {
-    "description": "추출된 텍스트의 법률적 의미를 해석하고 계산하는(Logic/Interpretation) 지침",
-    "logic_cases": [
+{
+  "description": "추출된 텍스트의 법률적 의미를 해석하고 계산하는(Logic/Interpretation) 지침",
+  "logic_cases": [
+    {
+      "pattern": "각자 부담",
+      "example_text": "소송비용은 원고들이 각자 부담한다.",
+      "interpretation": { "reimburse_ratio": "0" }
+    },
+    {
+      "pattern": "피고 패소 (전부 부담)",
+      "example_text": "소송비용은 피고가 부담한다.",
+      "interpretation": { "internal_share": "1/N", "reimburse_ratio": "100" }
+    }
+  ],
+  "conflicting_judgments_resolution": {
+    "description": "여러 심급의 판결문이 동시에 존재할 때, 최종 확정된 비용 부담 관계를 정립하는 규칙",
+    "rules": [
       {
-        "pattern": "각자 부담",
-        "example_text": "소송비용은 원고들이 각자 부담한다.",
-        "interpretation": {
-          "reimburse_ratio": "0 (신청인이 상대방에게 청구할 수 없음)"
-        }
+        "situation": "상급심(2심, 3심)에서 하급심 판결을 취소(Revoke)한 경우",
+        "action": "하급심 판결문에 적힌 비용 부담 문구를 무시하고, 상급심 주문에 적힌 '소송총비용' 또는 '1, 2심 소송비용' 부담 비율을 하급심 데이터(burdenRatio1 등)에도 덮어씌워라.",
+        "example": "2심 주문이 '제1심 판결을 취소한다. 소송총비용은 피고가 부담한다'인 경우 -> 1심 판결문에 '원고 부담'이라 적혀있어도, JSON의 burdenRatio1 값은 '100(피고부담)'으로 출력해야 한다."
       },
       {
-        "pattern": "특정 비율 명시",
-        "example_text": "소송비용 중 1/3은 원고가, 나머지는 피고가 부담한다.",
-        "interpretation": {
-          "reimburse_ratio": "2/3 (피고 부담분 = 신청인이 받을 돈)"
-        }
-      },
-      {
-        "pattern": "피고 패소 (전부 부담)",
-        "example_text": "소송비용은 피고가 부담한다.",
-        "interpretation": {
-          "internal_share": "피고들 수에 따라 1/N (별도 연대 언급 없을 시)",
-          "reimburse_ratio": "100"
-        }
-      },
-      {
-        "pattern": "사용자 피드백 반영 (패소자 부담 원칙)",
-        "example_text": "주문에 구체적 비율이 없으나 피고 청구가 전부 인용된 경우",
-        "interpretation": {
-          "note": "패소자인 피고가 100% 부담하는 것으로 해석한다."
-        }
+        "situation": "상급심이 기각(Dismiss)된 경우",
+        "action": "하급심 판결이 유지되므로, 하급심 판결문의 주문 내용을 그대로 따른다."
       }
     ]
-  },
-  {
-    "type": "logic_correction",
-    "description": "피고 김삼남에 대한 원고별 소송비용 분담 비율 적용 (김갑동 75%, 이을녀 100%)",
-    "condition": "defendant.name == '김삼남' AND judgment_text.includes('원고 김갑동이 4분의 1, 나머지는 피고 김삼남이 부담')",
-    "action": {
-      "calculation_method": "specific_plaintiff_split_based_on_partial_ruling",
-      "ratios": [
-        {
-          "plaintiff_name": "김갑동",
-          "defendant_burden": 0.75,
-          "plaintiff_burden": 0.25,
-          "basis": "명시적 판결문 구문 (원고 1/4 부담)"
-        },
-        {
-          "plaintiff_name": "이을녀",
-          "defendant_burden": 1,
-          "plaintiff_burden": 0,
-          "basis": "사용자 지침 기반 묵시적 해석 (김갑동 외 원고에 대해서는 피고 김삼남이 전액 부담)"
-        }
-      ],
-      "note": "판결문이 김갑동에 대해서만 명시적 비율을 제시했으므로, 이을녀에 대해서는 나머지 피고들에 대한 일반 규칙(원고 부담)과 달리 피고 김삼남이 전액 부담하는 것으로 해석함."
-    }
-  },
-  {
-    "type": "logic_correction",
-    "description": "원고들 대 피고 보조참가인 소송비용 전액 부담 주문 해석",
-    "condition": "판결문 주문에 '원고들과 피고 보조참가인 사이 발생한 소송비용은 피고 보조참가인이 부담한다.'와 같이, 원고들(복수)과 피고 보조참가인 간의 소송비용을 피고 보조참가인이 전액 부담하도록 명시한 경우",
-    "action": "FOR EACH Plaintiff (P) in the case: IF the cost allocation relationship is P vs Defendant_Intervenor (I): SET P's cost burden ratio = 0.0 (P 승소); SET I's cost burden ratio = 1.0 (I 패소). 이 규칙은 각 원고와 피고 보조참가인 간의 소송비용 관계에 개별적으로 적용된다."
-  },
-  {
-    "type": "reading_correction",
-    "new_strategy": {
-      "litigationValue": {
-        "strategy": "manual_correction",
-        "value": "500,000,000",
-        "reason": "사용자 지시에 따라 1심 및 2심 판결문의 청구취지(claimPurposeText)에서 '약속어음금채무는 500,000,000원을 초과하여는 존재하지 아니함을 확인한다.'는 문구를 통해 소가를 500,000,000원으로 확정함."
-      }
-    }
   }
-]
+}
