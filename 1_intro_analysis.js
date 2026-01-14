@@ -118,6 +118,7 @@ function removeFile(index) {
     if(input) input.value = ''; 
 }
 /* ========================================== */
+
 async function startAnalysis() {
     if (window.queuedFiles.length === 0) { alert("분석할 파일이 없습니다."); return; }
     
@@ -126,61 +127,90 @@ async function startAnalysis() {
     
     actionArea.classList.add('hidden'); 
     logsContainer.style.display = 'block';
-    logsContainer.innerHTML = `<div class="log-item log-info">AI 분석 엔진, 가이드라인 및 RAG 데이터 로드 중...</div>`;
+    logsContainer.innerHTML = `<div class="log-item log-info">AI 분석 엔진 및 지식 베이스(RAG) 로드 중...</div>`;
 
     try {
         let readingGuideStr = "";
         let logicGuideStr = "";
-        let ragDataStr = ""; // [New] RAG 데이터를 담을 변수
+        let ragDataStr = ""; 
 
         try {
-            // 1. [Fetch] 가이드라인 2개 + RAG 학습 데이터(DB) 동시 호출
-            // (참고: 실제 RAG 검색은 텍스트가 있어야 정확하지만, 여기서는 '사용자가 피드백으로 학습시킨 전역 규칙'을 가져온다고 가정합니다.)
-            // 만약 검색어가 필요하다면 1차 OCR 후 RAG를 호출하는 2-Step 방식이 필요하지만, 
-            // 현재 구조상 '학습된 일반 규칙'을 모두 가져오는 '/api/get-rag-rules' 같은 엔드포인트를 가정하거나,
-            // 간단히 guideline.json과 유사하게 로드합니다.
-            
+            // 1. 가이드라인 및 RAG 데이터 로드
             const [readingResp, logicResp, ragResp] = await Promise.all([
                 fetch(READING_GUIDE_URL),
                 fetch(LOGIC_GUIDE_URL),
-                // [New] RAG DB에서 '사용자 피드백으로 학습된 규칙들'을 가져오는 API 호출
-                // 만약 별도 API가 없다면 이 부분은 스킵되거나, 학습된 JSON 파일을 로드해야 함
                 fetch('/api/get-rag-rules').catch(() => ({ ok: false })) 
             ]);
 
             if (readingResp.ok) readingGuideStr = JSON.stringify(await readingResp.json(), null, 2);
             if (logicResp.ok) logicGuideStr = JSON.stringify(await logicResp.json(), null, 2);
             
-            // RAG 데이터 처리
             if (ragResp && ragResp.ok) {
                 const ragJson = await ragResp.json();
                 ragDataStr = JSON.stringify(ragJson, null, 2);
-                logsContainer.innerHTML += `<div class="log-item log-success">🧠 RAG 학습 데이터 로드 성공</div>`;
+                logsContainer.innerHTML += `<div class="log-item log-success">🧠 RAG 학습 데이터 로드 완료</div>`;
             } else {
-                ragDataStr = "No RAG data available.";
+                ragDataStr = "No specific RAG data found.";
             }
 
         } catch (e) {
-            console.warn("데이터 로드 중 일부 실패:", e);
+            console.warn("데이터 로드 실패:", e);
         }
 
         let parts = [];
         
-        // [FIX] 프롬프트 수정: RAG DB 섹션 추가 및 우선순위 지시
+        // [핵심 수정] 프롬프트: RAG 데이터 우선순위 '절대적' 강제
         const systemPrompt = `
-        너는 대한민국 법원의 '소송비용액 확정 신청'을 처리하는 전문 AI다.
-        제공된 판결문 이미지들을 분석하여 JSON 데이터를 생성하라.
+        너는 대한민국 법원의 '소송비용액 확정 신청'을 처리하는 AI다.
+        제공된 판결문 이미지들을 분석하여 **최종 확정된 비용 부담 내용**을 JSON으로 출력하라.
 
-        너의 판단 기준은 다음 3가지 소스(Source)다.
-        1. **[Reading Guide]**: 텍스트 추출 규칙
-        2. **[Logic Guide]**: 기본적인 법률 해석 및 계산 규칙 (상급심 우선 원칙 등 포함)
-        3. **[RAG Learned Data]**: 사용자의 피드백을 통해 학습된 '최신 판례 해석 규칙' (가장 높은 우선순위)
+        === [판단 기준 및 우선순위] ===
+        1순위 (절대적): **[RAG Learned Data]** (사용자 피드백 및 유사 판례)
+        2순위: **[Logic Guide]** (기본 해석 규칙)
+        3순위: **[Reading Guide]** (단순 텍스트 추출)
 
-        === [작업 지시] ===
-        1. 문서를 읽고 [Reading Guide]에 따라 텍스트를 추출하라.
-        2. [Logic Guide]의 **"conflicting_judgments_resolution"** 규칙을 적용하여 상급심 판결이 하급심을 취소했는지 확인하라.
-        3. **[중요]** 만약 해석이 모호하거나 특이한 케이스가 발생하면, **[RAG Learned Data]**에 유사한 사례가 있는지 확인하고 그 논리를 최우선으로 적용하라.
+        === [Step-by-Step 작업 지시] ===
         
+        1. **[Reading]**: 판결문에서 텍스트(주문, 당사자, 사건번호)를 추출하라.
+        
+        2. **[RAG Check & Overwrite] (매우 중요)**:
+           - [RAG Learned Data]에 이번 사건과 유사한 패턴(예: "상급심에서 취소됨", "피고가 전부 부담")이 있는지 확인하라.
+           - **만약 RAG 데이터가 "피고 부담(reimburseRatio: 100)"이라고 결론 내렸다면, 문서에 뭐라고 적혀있든 무조건 RAG의 결론을 따라라.**
+           - 특히 "1심 판결이 취소된 경우"에는 1심 주문 텍스트를 무시하고, **최종 확정된(2심/3심) 부담 비율**을 1심 데이터(burdenRatio1)에도 똑같이 적용하라.
+
+        3. **[Calculation]**:
+           - 피신청인(피고)의 'reimburseRatio'(상환 비율)를 계산하라.
+           - 공식: (100 - 원고 부담 비율) = 피고 부담 비율.
+           - 예: "소송비용은 피고가 부담한다" -> reimburseRatio: 100
+           - 예: "소송비용 중 30%는 원고가 부담한다" -> reimburseRatio: 70
+
+        === [Output Format] ===
+        반드시 아래 JSON 구조를 엄격히 준수하라. (주석은 제거하고 출력)
+        
+        {
+            "courtName1": "...",
+            "caseNo1": "...",
+            "soga1": 50000000, 
+            
+            // [중요] RAG가 '피고 부담'이라고 했다면 여기는 무조건 "100"이어야 함. "0" 금지.
+            "burdenRatio1": "100", 
+            "burdenRatio2": "100",
+
+            "costRulingText1": "주문 텍스트 원문",
+            
+            "plaintiffs": [...],
+            "defendants": [...],
+
+            "costBurdenDetails1": [
+                {
+                    "name": "김삼남",
+                    "role": "피신청인",
+                    "internalShare": 100,
+                    "reimburseRatio": 100  <-- 여기도 100 확인 필수
+                }
+            ]
+        }
+
         ---
         [Reading Guide Data]
         ${readingGuideStr}
@@ -188,7 +218,7 @@ async function startAnalysis() {
         [Logic Guide Data]
         ${logicGuideStr}
 
-        [RAG Learned Data (User Feedback & Precedents)]
+        [RAG Learned Data (High Priority)]
         ${ragDataStr}
         ---
 
@@ -199,20 +229,18 @@ async function startAnalysis() {
 
         for (let i = 0; i < window.queuedFiles.length; i++) {
             const file = window.queuedFiles[i];
-            logsContainer.innerHTML += `<div class="log-item log-info">📂 파일 분석 중... (${file.name})</div>`;
             const base64Data = await fileToBase64(file);
             parts.push({
                 inline_data: { mime_type: file.type, data: base64Data }
             });
         }
         
-        logsContainer.innerHTML += `<div class="log-item log-info" style="font-weight:bold;">AI가 판결문 주문을 해석하고 계산을 수행합니다...</div>`;
-        logsContainer.scrollTop = logsContainer.scrollHeight;
-
+        logsContainer.innerHTML += `<div class="log-item log-info" style="font-weight:bold;">AI가 RAG 데이터를 최우선으로 적용하여 분석 중입니다...</div>`;
+        
         // API 호출
         window.aiExtractedData = await callBackendFunction(parts);
 
-        logsContainer.innerHTML += `<div class="log-item log-success" style="font-weight:bold;">✨ 분석 및 계산 완료!</div>`;
+        logsContainer.innerHTML += `<div class="log-item log-success">✨ 분석 완료! (RAG 적용됨)</div>`;
         
         setTimeout(() => { startDataReview(window.aiExtractedData); }, 800);
 
