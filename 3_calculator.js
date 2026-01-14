@@ -216,94 +216,87 @@ function getRespondentNames() {
     return lines.map(l => l.replace(/^\d+[\.\)]\s*/, '').trim());
 }
 
-// [중요] AI 데이터 연동 및 계산기 필드 자동 완성 마스터 함수
+// [FIX] AI 데이터 연동 마스터 함수
 function applyAIAnalysisToCalculator(data) {
     if (!data) return;
+    
+    console.log("📥 [Step 3] AI 데이터 계산기 적용:", data);
 
-    console.log("📥 [Step 3] AI 데이터 적용 시작:", data);
-
-    // -------------------------------------------------------
-    // 1. 기본 비용 및 사건 정보 주입 (소가, 변호사보수, 법원 등)
-    // -------------------------------------------------------
+    // 1. 기본 필드(법원, 사건번호) 및 텍스트
     for (let i = 1; i <= 3; i++) {
-        // (1) 텍스트 필드 (법원, 사건번호)
-        if (data[`courtName${i}`]) document.getElementById(`courtName${i}`).value = data[`courtName${i}`];
-        if (data[`caseNo${i}`]) document.getElementById(`caseNo${i}`).value = data[`caseNo${i}`];
+        const setVal = (id, val) => {
+            const el = document.getElementById(id);
+            if(el && val) el.value = val;
+        };
+        setVal(`courtName${i}`, data[`courtName${i}`]);
+        setVal(`caseNo${i}`, data[`caseNo${i}`]);
         
-        // (2) 금액 필드 (소가, 착수금, 성공보수) -> 숫자만 추출 후 포맷팅
-        ['soga', 'startFee', 'successFee'].forEach(field => {
-            const key = field + i; // 예: soga1
-            const rawVal = data[key];
-            const el = document.getElementById(key);
-            
-            if (el && rawVal !== undefined && rawVal !== null && rawVal !== "") {
-                // "금 5,000,000원" -> "5000000" 변환
-                el.value = String(rawVal).replace(/[^0-9]/g, '');
-                // 콤마(,) 포맷팅 적용 함수 호출 (formatCurrency가 3_calculator.js에 있다고 가정)
-                if (typeof formatCurrency === 'function') formatCurrency(el, i);
-            }
-        });
-        
-        // (3) 주문 텍스트 (판결문 내용)
         const rulingText = data[`costRulingText${i}`] || data[`rulingText${i}`];
-        const textEl = document.getElementById(`rulingText${i}`);
-        if (textEl && rulingText) textEl.value = rulingText;
+        if (rulingText) setVal(`rulingText${i}`, rulingText);
     }
 
-    // -------------------------------------------------------
-    // 2. 피신청인 비율 UI 강제 생성 (데이터 주입 전 필수 단계)
-    // -------------------------------------------------------
-    // 현재 입력된 피신청인 이름들을 가져와서 DOM을 먼저 만듭니다.
+    // 2. 금액 필드 (소가, 착수금, 성공보수) -> 포맷팅 적용
+    const numericFields = ['soga', 'startFee', 'successFee'];
+    for (let i = 1; i <= 3; i++) {
+        numericFields.forEach(field => {
+            const key = field + i; // 예: soga1
+            const val = data[key]; 
+            
+            if (val !== undefined && val !== null && val !== "") {
+                const el = document.getElementById(key);
+                if (el) {
+                    // 숫자만 추출 (문자열일 경우 대비)
+                    el.value = String(val).replace(/[^0-9]/g, '');
+                    // 포맷팅 함수 호출 (콤마 찍기)
+                    if (typeof formatCurrency === 'function') formatCurrency(el, i); 
+                }
+            }
+        });
+    }
+
+    // 3. [핵심] 비율 UI 강제 생성 및 값 주입
+    // 피신청인 목록이 먼저 설정되어 있어야 함 (2_case_info 혹은 intro에서 넘어옴)
     initRatioUIs(); 
 
-    // -------------------------------------------------------
-    // 3. 비율 정보(내부 분담, 대외 부담) 매핑 및 주입
-    // -------------------------------------------------------
-    const respondentNames = getRespondentNames(); // 현재 UI에 있는 피신청인 목록
-
+    const respondentNames = getRespondentNames(); 
+    
     for (let i = 1; i <= 3; i++) {
-        const details = data[`costBurdenDetails${i}`]; // AI가 분석한 상세 비율 배열
-        const globalRatio = data[`burdenRatio${i}`];   // AI가 분석한 전체 비율 (예: "50%")
+        const details = data[`costBurdenDetails${i}`]; // AI가 계산한 상세 배열
+        const globalRatio = data[`burdenRatio${i}`];   // 전체 비율
 
         respondentNames.forEach((name, idx) => {
-            // A. 이름으로 상세 매칭 시도 (AI가 이름을 인식한 경우)
-            let matched = null;
+            // A. 이름 매칭을 통해 상세 비율 찾기
+            let matchedItem = null;
             if (details && Array.isArray(details)) {
                 const cleanName = name.replace(/\s+/g, '');
-                matched = details.find(d => {
-                    const cleanDName = d.name.replace(/\s+/g, '');
-                    return cleanName.includes(cleanDName) || cleanDName.includes(cleanName);
+                matchedItem = details.find(d => {
+                    const dName = d.name.replace(/\s+/g, '');
+                    return cleanName.includes(dName) || dName.includes(cleanName);
                 });
             }
 
-            // B. 값 주입 대상 요소 가져오기
-            const slider = document.getElementById(`slider-${i}-${idx}`); // 내부 분담 슬라이더
-            const internalInput = document.getElementById(`val-${i}-${idx}`); // 내부 분담 입력칸
-            const externalInput = document.getElementById(`ext-${i}-${idx}`); // 대외 부담(상환) 비율
+            // B. 값 주입 (UI 요소 찾기)
+            const slider = document.getElementById(`slider-${i}-${idx}`);
+            const intInput = document.getElementById(`val-${i}-${idx}`);
+            const extInput = document.getElementById(`ext-${i}-${idx}`);
 
-            // C. 데이터 적용 로직
-            if (matched) {
-                // [내부 분담 비율] (피신청인끼리 얼마씩?)
-                if (matched.internalShare !== undefined && slider && internalInput) {
-                    slider.value = matched.internalShare;
-                    internalInput.value = matched.internalShare;
+            if (matchedItem) {
+                // AI가 계산한 값이 있으면 우선 적용
+                if (matchedItem.internalShare !== undefined && slider) {
+                    slider.value = matchedItem.internalShare;
+                    intInput.value = matchedItem.internalShare;
                 }
-                // [대외 부담 비율] (신청인에게 얼마를?)
-                if (matched.reimburseRatio !== undefined && externalInput) {
-                    externalInput.value = matched.reimburseRatio;
+                if (matchedItem.reimburseRatio !== undefined && extInput) {
+                    extInput.value = matchedItem.reimburseRatio;
                 }
-            } 
-            else if (globalRatio && externalInput) {
-                // 상세 매칭 실패 시, 전체 비율(globalRatio)을 일괄 적용
-                // 예: 판결문에 "피고들은 원고에게 비용의 1/2을 지급하라" -> 모두에게 1/2 적용
-                externalInput.value = globalRatio;
+            } else if (globalRatio && extInput) {
+                // 상세 매칭 실패 시 전체 비율 적용
+                extInput.value = globalRatio;
             }
         });
     }
 
-    // -------------------------------------------------------
-    // 4. 최종 계산 실행 (모든 값이 들어간 상태에서 합계 갱신)
-    // -------------------------------------------------------
+    // 4. 최종 계산 실행
     calculateAll();
 }
 

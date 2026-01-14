@@ -126,16 +126,13 @@ async function startAnalysis() {
     
     actionArea.classList.add('hidden'); 
     logsContainer.style.display = 'block';
-    logsContainer.innerHTML = `<div class="log-item log-info">AI 분석 엔진 준비 중...</div>`;
+    logsContainer.innerHTML = `<div class="log-item log-info">AI 분석 엔진 및 가이드라인 로드 중...</div>`;
 
     try {
-        // [수정] 두 개의 가이드라인 파일을 로드
         let readingGuideStr = "";
         let logicGuideStr = "";
         
         try {
-            logsContainer.innerHTML += `<div class="log-item log-info">📚 분석 지침(Reading & Logic) 불러오는 중...</div>`;
-            
             const [readingResp, logicResp] = await Promise.all([
                 fetch(READING_GUIDE_URL),
                 fetch(LOGIC_GUIDE_URL)
@@ -149,36 +146,75 @@ async function startAnalysis() {
                 const lJson = await logicResp.json();
                 logicGuideStr = JSON.stringify(lJson, null, 2);
             }
-
-            logsContainer.innerHTML += `<div class="log-item log-success">✅ 가이드라인 로드 완료</div>`;
         } catch (e) {
-            console.warn("가이드라인 로드 중 일부 실패(기본값으로 진행):", e);
+            console.warn("가이드라인 로드 실패:", e);
         }
 
         let parts = [];
         
-        // [최종 수정] 프롬프트 개선: reading_guide.json의 특정 필드(rules, strategies)를 강제로 따르도록 지시 강화
+        // [FIX] 프롬프트 강화: 단순 추출이 아니라 '3_calculator.js'를 위한 데이터 생성기로 역할 정의
         const systemPrompt = `
-        너는 유능한 법률 사무원이야. 제공된 법률 문서 이미지(판결문, 이체내역 등)를 분석해서 소송비용확정신청에 필요한 정보를 JSON 포맷으로 추출해야 해.
-        
-        작업은 반드시 아래 [STEP 1] -> [STEP 2] -> [STEP 3] 순서로 진행해라.
+        너는 대한민국 법원의 '소송비용액 확정 신청'을 처리하는 전문 법률 사무원(AI)이다.
+        너의 목표는 문서를 읽고 [텍스트 추출] -> [법률적 판단] -> [JSON 데이터 생성]을 수행하는 것이다.
 
-        === [STEP 1: 문서 읽기 및 텍스트 추출 (Reading Phase)] ===
-        아래 제공된 **'Reading Guide Data'** 내부의 **"basic_extraction_rules"**와 **"strategies"**를 철저히 준수하여 데이터를 추출해라.
-        1. **"basic_extraction_rules"**에 따라 원고/피고 전원의 이름과 주소, 심급 정보 등을 빠짐없이 추출해라.
-        2. **"strategies"** 항목을 참조하여, 문서 내 줄바꿈이나 노이즈가 있더라도 **'주문 텍스트(costRulingText)'**를 완벽한 문장으로 복원해라.
-        
-        [Reading Guide Data]
+        반드시 아래 3단계를 거쳐 생각하고 결과를 도출하라.
+
+        === [STEP 1: Reading Phase (텍스트 추출)] ===
+        제공된 'Reading Guide'를 참고하여 문서에서 다음 정보를 정확히 찾아라.
+        - 법원명, 사건번호, 당사자(원고/피고) 이름 및 주소
+        - 주문(Ruling Text): 문장 중간에 줄바꿈이 있어도 하나로 합쳐서 완벽한 문장으로 복원하라.
+        - 금액 정보: 소가, 착수금, 성공보수 등이 있다면 숫자 형태로 추출하라.
+
+        [Reading Guide]
         ${readingGuideStr}
 
-        === [STEP 2: 데이터 해석 및 논리 적용 (Logic Phase)] ===
-        위에서 추출한 텍스트(특히 costRulingText)를 바탕으로, 아래 **'Logic Guide Data'**의 논리를 적용하여 '내부 분담 비율(internalShare)'과 '상환 비율(reimburseRatio)'을 계산해라.
-        
-        [Logic Guide Data]
+        === [STEP 2: Logic Phase (해석 및 계산)] ===
+        제공된 'Logic Guide'와 너의 법률적 지식을 활용하여 다음을 계산하라.
+        1. **소송비용 부담 비율(reimburseRatio)**: 
+           - 주문에 "소송비용은 피고가 부담한다"라고 되어 있으면 피고의 부담 비율은 100이다.
+           - "소송비용 중 30%는 원고가, 나머지는 피고가 부담한다"라면 피고의 부담 비율은 70이다.
+        2. **내부 분담 비율(internalShare)**:
+           - 피고가 여러 명일 때, 주문에 "연대하여" 또는 "각자"라는 말이 있으면, 피고들 간의 내부 분담은 균등(1/N)하게 나눈다. (예: 피고 2명이면 각각 50%)
+           - 별도 명시가 없으면 균등 분할이 원칙이다.
+
+        [Logic Guide]
         ${logicGuideStr}
 
-        === [STEP 3: 최종 출력] ===
-        위 'Reading Guide Data'에 명시된 **"output_format_guide"**의 JSON 구조를 엄격히 준수하여 결과를 출력해라.
+        === [STEP 3: Output Phase (JSON 생성)] ===
+        **반드시 아래의 JSON 구조를 엄격하게 지켜서 출력하라.** (키 이름이 다르면 계산기가 작동하지 않으므로 정확히 일치시켜야 한다.)
+
+        {
+            "courtName1": "서울중앙지방법원",
+            "caseNo1": "2023가합123456",
+            "rulingDate1": "2023. 10. 15.",
+            
+            "soga1": 50000000, 
+            "startFee1": 3300000,
+            "successFee1": 0,
+
+            "costRulingText1": "추출한 주문 텍스트 원문",
+            "burdenRatio1": "피고들이 원고에게 주어야 할 전체 비율 (예: 100 또는 70)",
+
+            "plaintiffs": [ { "name": "이원고", "addr": "서울시..." } ],
+            "defendants": [ { "name": "김피고", "addr": "부산시..." }, { "name": "박피고", "addr": "대구시..." } ],
+
+            "costBurdenDetails1": [
+                {
+                    "name": "김피고",
+                    "role": "피신청인",
+                    "internalShare": 50,      // (설명: 피고들끼리 나누는 비율. 숫자만)
+                    "reimburseRatio": 100     // (설명: 원고에게 갚아야 할 비율. 주문에 따름. 숫자만)
+                },
+                {
+                    "name": "박피고",
+                    "role": "피신청인",
+                    "internalShare": 50,
+                    "reimburseRatio": 100
+                }
+            ]
+        }
+        
+        *주의: 금액(soga, fee)은 콤마 없는 숫자(Integer)로, 비율(share, ratio)은 0~100 사이의 숫자(Number)로 출력하라.*
         오직 JSON 형식의 텍스트만 응답해.
         `;
 
@@ -186,21 +222,20 @@ async function startAnalysis() {
 
         for (let i = 0; i < window.queuedFiles.length; i++) {
             const file = window.queuedFiles[i];
-            logsContainer.innerHTML += `<div class="log-item log-info">📂 파일 읽는 중... (${file.name})</div>`;
+            logsContainer.innerHTML += `<div class="log-item log-info">📂 파일 분석 중... (${file.name})</div>`;
             const base64Data = await fileToBase64(file);
-            parts.push({ text: `[파일정보: ${file.name}]` });
             parts.push({
                 inline_data: { mime_type: file.type, data: base64Data }
             });
         }
         
-        logsContainer.innerHTML += `<div class="log-item log-info" style="font-weight:bold;">AI가 문서를 분석 중입니다...</div>`;
+        logsContainer.innerHTML += `<div class="log-item log-info" style="font-weight:bold;">AI가 판결문 주문을 해석하고 계산을 수행합니다...</div>`;
         logsContainer.scrollTop = logsContainer.scrollHeight;
 
-        // [FIX] 결과를 window.aiExtractedData에 저장
+        // API 호출
         window.aiExtractedData = await callBackendFunction(parts);
 
-        logsContainer.innerHTML += `<div class="log-item log-success" style="font-weight:bold;">✨ AI 분석 완료! 결과 확인</div>`;
+        logsContainer.innerHTML += `<div class="log-item log-success" style="font-weight:bold;">✨ 분석 및 계산 완료!</div>`;
         
         setTimeout(() => { startDataReview(window.aiExtractedData); }, 800);
 
