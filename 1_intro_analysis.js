@@ -175,7 +175,11 @@ async function startAnalysis() {
 
         === [Step-by-Step 작업 지시] ===
         
-        1. **[Reading]**: 판결문에서 텍스트(주문, 당사자, 사건번호)를 추출하라.
+        1. **[Reading & Classification]**: 
+           - 업로드된 모든 이미지의 내용을 읽고 사건번호 부호를 통해 **심급(1심/2심/3심)을 분류**하라.
+           - (예: '가단, 가합, 소' = 1심 / '나' = 2심 / '다' = 3심)
+           - 1심 정보는 json의 '...1' 필드에, 2심 정보는 '...2', 3심 정보는 '...3' 필드에 각각 정확히 매핑하여 추출하라. 
+           - 2심이나 3심 판결문이 있다면 해당 주문(Cost Ruling)과 청구취지를 반드시 추출해야 한다.
         
         2. **[RAG Check & Overwrite] (매우 중요)**:
            - [RAG Learned Data]에 이번 사건과 유사한 패턴(예: "상급심에서 취소됨", "피고가 전부 부담")이 있는지 확인하라.
@@ -192,16 +196,19 @@ async function startAnalysis() {
         반드시 아래 JSON 구조를 엄격히 준수하라. (주석은 제거하고 출력)
         
         {
-            "courtName1": "...",
-            "caseNo1": "...",
+            "courtName1": "...", "caseNo1": "...", "rulingDate1": "...", "costRulingText1": "...",
+            "courtName2": "...", "caseNo2": "...", "rulingDate2": "...", "costRulingText2": "...",
+            "courtName3": "...", "caseNo3": "...", "rulingDate3": "...", "costRulingText3": "...",
+
             "soga1": 50000000, 
+            "soga2": 0,
+            "soga3": 0,
             
             // [중요] RAG가 '피고 부담'이라고 했다면 여기는 무조건 "100"이어야 함. "0" 금지.
             "burdenRatio1": "100", 
             "burdenRatio2": "100",
+            "burdenRatio3": "100",
 
-            "costRulingText1": "주문 텍스트 원문",
-            
             "plaintiffs": [...],
             "defendants": [...],
 
@@ -210,7 +217,7 @@ async function startAnalysis() {
                     "name": "김삼남",
                     "role": "피신청인",
                     "internalShare": 100,
-                    "reimburseRatio": 100  <-- 여기도 100 확인 필수
+                    "reimburseRatio": 100 
                 }
             ]
         }
