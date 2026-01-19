@@ -97,19 +97,63 @@ export default async function handler(req, res) {
             if (fs.existsSync(readingPath)) readingGuideStr = fs.readFileSync(readingPath, 'utf8');
             if (fs.existsSync(logicPath)) logicGuideStr = fs.readFileSync(logicPath, 'utf8');
 
+            // [변경됨] 프론트엔드에 있던 핵심 프롬프트를 백엔드로 이식
             const systemPrompt = `
-            너는 법률 사무원 AI야. 아래 가이드라인을 엄격히 준수해.
+            너는 대한민국 법원의 '소송비용액 확정 신청'을 처리하는 AI다.
+            제공된 판결문 이미지들을 분석하여 **최종 확정된 비용 부담 내용**을 JSON으로 출력하라.
+
+            === [판단 기준 및 우선순위] ===
+            1순위 (절대적): **[RAG Learned Data]** (사용자 피드백 및 유사 판례)
+            2순위: **[Logic Guide]** (기본 해석 규칙)
+            3순위: **[Reading Guide]** (단순 텍스트 추출)
+
+            === [Step-by-Step 작업 지시] ===
             
-            [STEP 1: Reading Guide]
+            1. **[Reading & Classification]**: 
+               - 업로드된 모든 이미지의 내용을 읽고 사건번호 부호를 통해 **심급(1심/2심/3심)을 분류**하라.
+               - (예: '가단, 가합, 소' = 1심 / '나' = 2심 / '다' = 3심)
+               - 1심 정보는 json의 '...1' 필드에, 2심 정보는 '...2', 3심 정보는 '...3' 필드에 각각 정확히 매핑하여 추출하라. 
+               - 2심이나 3심 판결문이 있다면 해당 주문(Cost Ruling)과 청구취지를 반드시 추출해야 한다.
+            
+            2. **[RAG Check & Overwrite] (매우 중요)**:
+               - [RAG Learned Data]에 이번 사건과 유사한 패턴(예: "상급심에서 취소됨", "피고가 전부 부담")이 있는지 확인하라.
+               - **만약 RAG 데이터가 "피고 부담(reimburseRatio: 100)"이라고 결론 내렸다면, 문서에 뭐라고 적혀있든 무조건 RAG의 결론을 따라라.**
+               - 특히 "1심 판결이 취소된 경우"에는 1심 주문 텍스트를 무시하고, **최종 확정된(2심/3심) 부담 비율**을 1심 데이터(burdenRatio1)에도 똑같이 적용하라.
+
+            3. **[Calculation]**:
+               - 피신청인(피고)의 'reimburseRatio'(상환 비율)를 계산하라.
+               - 공식: (100 - 원고 부담 비율) = 피고 부담 비율.
+               - 예: "소송비용은 피고가 부담한다" -> reimburseRatio: 100
+               - 예: "소송비용 중 30%는 원고가 부담한다" -> reimburseRatio: 70
+
+            === [Output Format] ===
+            반드시 아래 JSON 구조를 엄격히 준수하라. (주석은 제거하고 출력)
+            
+            {
+                "courtName1": "...", "caseNo1": "...", "rulingDate1": "...", "costRulingText1": "...",
+                "courtName2": "...", "caseNo2": "...", "rulingDate2": "...", "costRulingText2": "...",
+                "courtName3": "...", "caseNo3": "...", "rulingDate3": "...", "costRulingText3": "...",
+
+                "soga1": 0, "soga2": 0, "soga3": 0,
+                "burdenRatio1": "100", "burdenRatio2": "100", "burdenRatio3": "100",
+
+                "plaintiffs": [...],
+                "defendants": [...],
+                "costBurdenDetails1": [...]
+            }
+
+            ---
+            [Reading Guide Data]
             ${readingGuideStr}
 
-            [STEP 2: Logic Guide]
+            [Logic Guide Data]
             ${logicGuideStr}
+            ---
 
-            [STEP 3]
-            위 규칙에 따라 JSON 포맷으로만 응답해.
+            오직 JSON 형식의 텍스트만 응답하라.
             `;
             
+            // 기존 코드 유지 (프롬프트를 배열 맨 앞에 추가)
             parts.unshift({ text: systemPrompt });
 
         } catch (fsError) {
