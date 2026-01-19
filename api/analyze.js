@@ -15,12 +15,7 @@ export const config = {
 
 // [temp3에서 가져옴] 더 다양하고 강력한 모델 목록
 const MODELS_TO_TRY = [
-    "gemini-1.5-flash",
-    "gemini-1.5-flash-001",
-    "gemini-1.5-flash-002",
-    "gemini-1.5-pro",
-    "gemini-1.0-pro",
-    "gemini-pro",
+    "gemini-2.0-flash",
     "gemini-flash-latest"
 ];
 
