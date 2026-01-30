@@ -145,12 +145,12 @@ export default async function handler(req, res) {
 
             1. **No Nesting (중첩 금지)**: 
                - 결과는 무조건 **Flat JSON**이어야 한다.
-               - `courtRuling`, `lawyerFees`, `level1` 같은 상위 객체(Wrapper)를 **절대 생성하지 마라**.
-               - 모든 필드(`caseNo1`, `soga1`, `startFee1` 등)는 JSON의 최상위(Root)에 위치해야 한다.
+               - 'courtRuling', 'lawyerFees', 'level1' 같은 상위 객체(Wrapper)를 **절대 생성하지 마라**.
+               - 모든 필드('caseNo1', 'soga1', 'startFee1' 등)는 JSON의 최상위(Root)에 위치해야 한다.
 
             2. **Key Name Strictness (키 이름 준수)**: 
-               - 반드시 아래 [Reading Guide Data]의 `json_structure_example`에 정의된 키 이름만 사용하라.
-               - 금지된 키 예시: `applicant` (x) -> `plaintiffs` (o), `caseNumber` (x) -> `caseNo1` (o)
+               - 반드시 아래 [Reading Guide Data]의 'json_structure_example'에 정의된 키 이름만 사용하라.
+               - 금지된 키 예시: 'applicant' (x) -> 'plaintiffs' (o), 'caseNumber' (x) -> 'caseNo1' (o)
 
             3. **Use the Example**: 
                - 창의성을 발휘하지 말고, 제공된 예시 JSON 구조를 템플릿처럼 사용하여 값만 채워 넣어라.
