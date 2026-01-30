@@ -140,10 +140,20 @@ export default async function handler(req, res) {
                - **만약 RAG 데이터가 "피고 부담(reimburseRatio: 100)"이라고 결론 내렸다면, 문서에 뭐라고 적혀있든 무조건 RAG의 결론을 따라라.**
                - 특히 "1심 판결이 취소된 경우"에는 1심 주문 텍스트를 무시하고, **최종 확정된(2심/3심) 부담 비율**을 1심 데이터(burdenRatio1)에도 똑같이 적용하라.
 
+            === [Output Format & Anti-Hallucination Rules] ===
+            **경고: 아래 규칙을 어길 시 시스템 오류가 발생하므로 엄격히 준수하라.**
 
-            === [Output Format] ===
-            **반드시 아래 [Reading Guide Data] 섹션 내의 'json_structure_example' 구조를 엄격히 준수하여 출력하라.**
-            (Key 이름을 임의로 변경하지 말고, 주석은 제거하고 순수 JSON만 출력할 것)
+            1. **No Nesting (중첩 금지)**: 
+               - 결과는 무조건 **Flat JSON**이어야 한다.
+               - `courtRuling`, `lawyerFees`, `level1` 같은 상위 객체(Wrapper)를 **절대 생성하지 마라**.
+               - 모든 필드(`caseNo1`, `soga1`, `startFee1` 등)는 JSON의 최상위(Root)에 위치해야 한다.
+
+            2. **Key Name Strictness (키 이름 준수)**: 
+               - 반드시 아래 [Reading Guide Data]의 `json_structure_example`에 정의된 키 이름만 사용하라.
+               - 금지된 키 예시: `applicant` (x) -> `plaintiffs` (o), `caseNumber` (x) -> `caseNo1` (o)
+
+            3. **Use the Example**: 
+               - 창의성을 발휘하지 말고, 제공된 예시 JSON 구조를 템플릿처럼 사용하여 값만 채워 넣어라.
 
             ---
             [Reading Guide Data]
