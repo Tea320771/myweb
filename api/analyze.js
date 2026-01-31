@@ -102,6 +102,15 @@ export default async function handler(req, res) {
             2순위: **[Logic Guide]** (기본 해석 규칙)
             3순위: **[Reading Guide]** (단순 텍스트 추출)
 
+            === [사건 정보 및 선고일자 추출 규칙] ===
+            1. **선고일자(rulingDate)**: 
+            - 판결문 중 '판결선고' 기재된 날짜인 '0000. 00. 00.'를 찾아라.
+            - 출력 키: "rulingDate1", "rulingDate2", "rulingDate3" (필수 추출)
+            - 형식: "YYYY. MM. DD." (예: 2023. 10. 10.)
+
+            2. **사건번호 및 법원**:
+            - 출력 키: "caseNo1", "courtName1", "caseNo2", "courtName2"... (caseNumber 아님)
+
             === [Step-by-Step 작업 지시] ===
             
             1. **[Reading & Classification]**: 
@@ -135,7 +144,20 @@ export default async function handler(req, res) {
                - 예: "소송비용은 피고가 부담한다" -> reimburseRatio: 100
                - 예: "소송비용 중 30%는 원고가 부담한다" -> reimburseRatio: 70
 
-            6. **[RAG Check & Overwrite] (매우 중요)**:
+            6. **소가 합산 금지 (Individual Soga Extraction)**:
+            - 보조참가인, 독립당사자참가인에 대한 비용 청구 시, 각 원고와의 독립된 청구액을 소가로 추출한다.
+            - 추출 데이터 예시:
+            * (김갑동 vs 보조참가인) soga: 50,000,000 
+            * (이을녀 vs 보조참가인) soga: 100,000,000 
+
+            7. **비용 부담 상세화 (Cost Burden Details)**:
+            - 'costBurdenDetails1' 배열 내에 위 정산 단위를 별도로 기재하라.
+            - 각 객체는 { "name": "방국봉", "targetPlaintiff": "김갑동", "soga": 50000000, "reimburseRatio": 100 } 형태를 유지하라.
+
+            8. **선고일자 추출**:
+            - '판결 선고' 항목의 2011. 3. 1.을 찾아 'rulingDate1'에 저장하라[cite: 11].
+
+            9. **[RAG Check & Overwrite] (매우 중요)**:
                - [RAG Learned Data]에 이번 사건과 유사한 패턴(예: "상급심에서 취소됨", "피고가 전부 부담")이 있는지 확인하라.
                - **만약 RAG 데이터가 "피고 부담(reimburseRatio: 100)"이라고 결론 내렸다면, 문서에 뭐라고 적혀있든 무조건 RAG의 결론을 따라라.**
                - 특히 "1심 판결이 취소된 경우"에는 1심 주문 텍스트를 무시하고, **최종 확정된(2심/3심) 부담 비율**을 1심 데이터(burdenRatio1)에도 똑같이 적용하라.
