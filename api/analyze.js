@@ -95,7 +95,7 @@ export default async function handler(req, res) {
             // [변경됨] 프론트엔드에 있던 핵심 프롬프트를 백엔드로 이식
             const systemPrompt = `
             너는 대한민국 법원의 '소송비용액 확정 신청'을 처리하는 AI다.
-            제공된 판결문 이미지들을 분석하여 **최종 확정된 비용 부담 내용**을 JSON으로 출력하라.
+            반드시 아래에 명시된 **UI 요소의 ID(Key Name)**를 엄격히 준수하여 JSON을 출력하라.
 
             === [판단 기준 및 우선순위] ===
             1순위 (절대적): **[RAG Learned Data]** (사용자 피드백 및 유사 판례)
@@ -155,6 +155,7 @@ export default async function handler(req, res) {
                - 'court1' (x) -> 'courtName1' (o)
                - 'court2' (x) -> 'courtName2' (o)
                - 'ruling1' (x) -> 'costRulingText1' (o)
+               - 'caseNumber1' (x) -> 'caseNo1' (o)
                - 반드시 제공된 예시('reading_guide.json')의 키 이름과 똑같이 출력하라.
 
             ---
