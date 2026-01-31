@@ -148,14 +148,14 @@ export default async function handler(req, res) {
                - 상위 객체(Wrapper)를 절대 생성하지 마라.
 
             2. **Strict Data Types (자료형 준수)**:
-               - 'plaintiffs': 반드시 **객체 배열** `[{ "name": "...", "addr": "..." }]` 형태여야 한다. (문자열 금지)
-               - 'defendants': 반드시 **객체 배열** `[{ "name": "...", "addr": "..." }]` 형태여야 한다. (문자열 금지)
+               - 'plaintiffs': 반드시 **객체 배열** '[{ "name": "...", "addr": "..." }]' 형태여야 한다. (문자열 금지)
+               - 'defendants': 반드시 **객체 배열** '[{ "name": "...", "addr": "..." }]' 형태여야 한다. (문자열 금지)
 
             3. **Key Name Strictness (키 이름 준수)**: 
                - 'court1' (x) -> 'courtName1' (o)
                - 'court2' (x) -> 'courtName2' (o)
                - 'ruling1' (x) -> 'costRulingText1' (o)
-               - 반드시 제공된 예시(`reading_guide.json`)의 키 이름과 똑같이 출력하라.
+               - 반드시 제공된 예시('reading_guide.json')의 키 이름과 똑같이 출력하라.
 
             ---
             [Reading Guide Data]
